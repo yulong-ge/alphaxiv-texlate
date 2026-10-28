@@ -7,7 +7,7 @@
 | 部分 | 作用 |
 | --- | --- |
 | `userscript/alphaxiv-texlate.user.js` | Tampermonkey 脚本：工具栏切换钮（EN / 中 / 双）、PDF 字节替换、阅读器热重载 |
-| TeXlate（本地服务） | arXiv LaTeX 源码 → 段落翻译 → 重新编译中文 PDF；对照版需要带 `POST /api/task/{id}/bilingual` 的 TeXlate 版本 |
+| TeXlate（本地服务） | arXiv LaTeX 源码 → 段落翻译 → 重新编译中文 PDF。中英对照版需要 `POST /api/task/{id}/bilingual`，目前在 fork 分支 [yulong-ge/texlate@local/alphaxiv](https://github.com/yulong-ge/texlate/tree/local/alphaxiv)，正与上游讨论合并 |
 | `tools/` | 模型评测、批量翻译、对照版批量生成等脚本 |
 | `tests/e2e/` | Playwright 端到端测试（真实 alphaXiv 页面） |
 
@@ -34,3 +34,7 @@
 - 只适用于提供 LaTeX 源码的 arXiv 论文。
 - 依赖 alphaXiv 前端的内部结构（模块文件名前缀、jotai atom 形状、工具栏 aria-label）；alphaXiv 改版后可能失效，失败会在按钮下方显示原因。
 - 中英页数不同，切换后的阅读位置只是近似对齐。
+
+## 许可
+
+[MIT](LICENSE)

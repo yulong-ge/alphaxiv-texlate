@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.4.0
+// @version      0.4.1
 // @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，PDF 原地热切换为中文版或中英对照版
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
@@ -12,6 +12,9 @@
 // @grant        GM_setValue
 // @grant        unsafeWindow
 // @connect      127.0.0.1
+// @homepageURL  https://github.com/yulong-ge/alphaxiv-texlate
+// @updateURL    https://raw.githubusercontent.com/yulong-ge/alphaxiv-texlate/main/userscript/alphaxiv-texlate.user.js
+// @downloadURL  https://raw.githubusercontent.com/yulong-ge/alphaxiv-texlate/main/userscript/alphaxiv-texlate.user.js
 // ==/UserScript==
 
 /*

@@ -14,7 +14,7 @@
 ## 使用
 
 1. 运行 TeXlate 服务：`texlate service start --no-open`，监听 `http://127.0.0.1:8765`。
-2. 在浏览器的 Tampermonkey 中新建脚本，粘贴 `userscript/alphaxiv-texlate.user.js`。
+2. 装好 Tampermonkey 后，在浏览器中打开 <https://raw.githubusercontent.com/yulong-ge/alphaxiv-texlate/main/userscript/alphaxiv-texlate.user.js>，点「安装」。之后脚本会随仓库更新自动更新（Tampermonkey 按其检查周期拉取，也可在面板里手动「检查更新」）。
 3. 打开 alphaXiv 论文的 Paper 视图。在工具栏「分享」右侧点 EN，按需选择：
    - **中文版**：未翻译时，后台提交 TeXlate 翻译并显示进度，完成后自动切换。
    - **中英对照版**：每个正文段先显示灰色原文，再显示译文。缺少时由 TeXlate 按需编译，通常只需几秒到几十秒。

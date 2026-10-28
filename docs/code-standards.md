@@ -6,6 +6,7 @@
 | 依赖 alphaXiv 内部结构的地方，按文件名前缀和对象形状查找，不写死带 hash 的文件名或压缩后的导出名 | `PAGE_HELPER` 内没有 `-[A-Za-z0-9]{8}\.js` 字面量 |
 | 只有在客户端渲染完成后才挂载节点 | 端到端测试无 pageerror |
 | OpenRouter 只用 `:free` 模型；脚本在批量调用前拦截非 `:free` 的 OpenRouter 模型 | `tools/bench_models.py`、`tools/gen_arms.py` 中的硬闸 |
+| 改动油猴脚本必须提升 `@version`（Tampermonkey 按 `@updateURL` 只在版本号变大时自动更新） | `.githooks/pre-commit` 拦截未升版本的提交；克隆后执行 `git config core.hooksPath .githooks` |
 | 不把论文原文、译文和评测载荷提交进仓库 | `git status` 中没有 `arms/`、`*_results.jsonl` |
 
 ## 验收命令

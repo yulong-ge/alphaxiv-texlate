@@ -1,0 +1,16 @@
+#!/bin/sh
+# 油猴脚本改动必须提升 @version：Tampermonkey 只在版本号变大时自动更新
+f=userscript/alphaxiv-texlate.user.js
+git diff --cached --quiet -- "$f" && exit 0
+old=$(git show "HEAD:$f" 2>/dev/null | sed -n 's#^// @version *##p')
+new=$(git show ":$f" | sed -n 's#^// @version *##p')
+[ -z "$old" ] && exit 0
+if [ "$old" = "$new" ]; then
+  echo "pre-commit: $f 已改动但 @version 仍为 ${old}；请提升版本号，否则浏览器不会自动更新" >&2
+  exit 1
+fi
+newest=$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)
+if [ "$newest" != "$new" ]; then
+  echo "pre-commit: @version ${new} 不大于 ${old}" >&2
+  exit 1
+fi

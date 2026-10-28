@@ -5,3 +5,14 @@ swe2medium-ref    24    96.8     98.4   78     0      7      4        0      32
 dsv41flash-low    24    95.8     98.4   62     0      7      4        0      33
 hy3-low           24    95.3     98.0   78     0      9      6        0      26
 group-current     24    89.3     95.9   48     0     18     10        0      43
+
+# 合并（含 OpenRouter 免费 nemotron 两臂，run magpie-or-free）
+arm                  n  stated  min  major  minor
+step5-low           24    97.5   78      5      5
+glm53flash          24    97.2   78      3      7
+nemo-ultra-free     24    97.0   85      7      9
+swe2medium-ref      24    96.8   78      7      4
+dsv41flash-low      24    95.8   62      7      4
+hy3-low             24    95.3   78      9      6
+nemo-supervl-free   24    95.0   76     10     12
+group-current       24    89.3   48     18     10

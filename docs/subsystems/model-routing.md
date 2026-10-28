@@ -5,9 +5,10 @@
 | 层 | 配置 |
 | --- | --- |
 | TeXlate 通道 | Magpie `http://127.0.0.1:3425`，模型 `group/texlate-fast`，使用专用 gateway key `texlate` |
-| `group/texlate-fast` | `order` 路由：先 `group/texlate-glm`，失败时用 `workbuddy/step-5-preview:low` |
+| `group/texlate-fast` | `order` 路由：先 `group/texlate-glm`，失败时用 `group/texlate-backup` |
 | `group/texlate-glm` | `opencode-zen-free/glm-5.3-flash-free` |
-| key `texlate` 模型白名单 | `group/texlate-fast`、`group/texlate-glm`、`opencode-zen-free/glm-5.3-flash-free`、`zhipu/glm-5.3-flash`、`workbuddy/step-5-preview` |
+| `group/texlate-backup` | `rotate`：`workbuddy/step-5-preview:low`、`openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
+| key `texlate` 模型白名单 | 以上三个分组及其成员，另加 `zhipu/glm-5.3-flash` |
 | TeXlate 设置 | `concurrency=12`，`warmup=false` |
 
 ## 约束

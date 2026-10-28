@@ -1,0 +1,13 @@
+cohere/north-mini-code:free  15.4s ph=N cjk=620 reas=990 |  20.1s ph=N cjk=616 reas=985
+dots-studio/dots-3-note-preview:free  94.3s ph=Y cjk=594 reas=8616 | 108.1s ph=Y cjk=580 reas=10100
+google/gemma-4-26b-a4b-it:free ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Rate limit exce | ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Rate limit exce
+google/gemma-4-31b-it:free ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Provider return | ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Provider return
+liquid/lfm-2.5-2.6b:free  12.5s ph=N cjk=482 reas=4816 |  12.4s ph=Y cjk=581 reas=3907
+nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free ERR ReadTimeout:  | 211.5s ph=N cjk=1668 reas=9492
+nvidia/nemotron-3-ultra-550b-a55b:free  65.7s ph=Y cjk=573 reas=1697 | 142.7s ph=Y cjk=574 reas=1748
+nvidia/nemotron-3.5-lightning:free ERR ReadTimeout:  | ERR ReadTimeout: 
+nvidia/nemotron-3.5-super-vl:free  74.0s ph=Y cjk=572 reas=6958 |  47.4s ph=Y cjk=561 reas=6126
+poolside/laguna-s-2.1:free  21.5s ph=Y cjk=593 reas=0 |  27.0s ph=Y cjk=617 reas=0
+poolside/laguna-xs-2.1:free ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Rate limit exce |  10.5s ph=N cjk=564 reas=0
+recursive/flint-v1.0:free  88.5s ph=N cjk=585 reas=9090 | 131.8s ph=Y cjk=595 reas=15814
+xingchen-agi/xing4.0-29b-a4b:free ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Provider return | ERR HTTP 429: {"error":{"code":null,"message":"OpenRouter: Provider return

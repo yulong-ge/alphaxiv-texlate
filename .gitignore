@@ -1,0 +1,10 @@
+# 评测与批处理输出（含论文原文/译文，不入库）
+arms/
+*.jsonl
+*.raw
+*.log
+or_models.json
+# 截图与缓存
+*.png
+__pycache__/
+.venv/

@@ -18,3 +18,5 @@
   原因：Magpie 按模型目录标价估算费用，免费模型也会被计费，0.01 美元的上限会把正常翻译拦成 429。证据：texlate key 报 “has used $0.05 of its $0.01”。
 - **OpenCode Zen 免费额度会用尽（429 “Free usage limit reached”），翻译耗时以降级模型为准评估。**
   证据：WorldCast（238 块）翻译期间，61 个请求降级到 step-5-preview，用时 914 s；1502.02761 在 Zen 正常服务时只用 138 s。
+- **调用 OpenRouter 免费模型时显式关闭推理（Magpie 成员写 `:none`）。**
+  原因：默认推理下，单批输出 6k–15k 推理 token，导致超时、空内容和占位符损坏；关闭后，dots 从 94–108 s 降到 11 s，nemotron-ultra 从 66–143 s 降到 16 s，质量仍在第一档。证据：`docs/research/2026-10-28-model-selection.md`。

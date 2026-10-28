@@ -1,6 +1,14 @@
 # 翻译模型选型（2026-10-28）
 
-## 结论
+## 结论（2026-10-29 更新）
+
+- OpenRouter 免费模型此前失败的主因是默认推理：超时、空内容（`finish_reason=length`）、慢。加 `:none` 后：
+  - `dots-3-note:free` 得 97.4 分，24 块 36 s。
+  - `nemotron-3-ultra:free` 得 96.7 分，24 块 63 s。
+  两者都进入主力池 `texlate-pool`，与 Zen GLM 按 3:1:1 混合。
+- 实测：Solaris（140 块）重译 179 s，状态 done（原为 partial）。共 94 个请求，其中 13 个触发 OpenRouter 每分钟限额后由 Magpie 转给其他成员；Zen 额度用尽时被自动跳过。
+
+## 早期结论
 
 - 第一层用 OpenCode Zen 免费 `glm-5.3-flash-free`：质量第一档、不推理、并发能力强。缺点是免费额度会用尽。
 - 后备层轮转 `workbuddy/step-5-preview:low` 和 OpenRouter 免费 `nemotron-3-ultra`：两者质量都在第一档，但都慢。
@@ -19,6 +27,10 @@
 | deepseek-v4.1-flash:low | 95.8 | 7 |
 | hy3:low | 95.3 | 9 |
 | nemotron-3.5-super-vl:free | 95.0 | 10 |
+| dots-3-note:free:none | 97.4 | 4 |
+| nemotron-3-ultra:free:none | 96.7 | 6 |
+| north-mini-code:free:none | 90.0 | 22 |
+| laguna-s-2.1:free:none | 88.9 | 24 |
 | group-translate（原分组） | 89.3 | 18 |
 
 ## 速度与可用性

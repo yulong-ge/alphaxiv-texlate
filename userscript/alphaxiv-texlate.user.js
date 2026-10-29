@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.4.1
+// @version      0.5.0
 // @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，PDF 原地热切换为中文版或中英对照版
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
@@ -63,6 +63,8 @@
 
   // 阅读器实际加载的带版本 ID；未见 PDF 请求前回退到地址栏 ID
   let currentId = null;
+  // 论文（去版本号）→ 阅读器当前所载译文 PDF 的 TeXlate 任务 ID
+  const shownTask = new Map();
   const paperId = () => currentId || idFromLocation();
 
   // ------------------------------------------------------------ TeXlate 调用
@@ -129,6 +131,9 @@
     }
     const r = await gm('GET', url, { responseType: 'arraybuffer' });
     if (r.status !== 200) throw new TexlateError(`下载${MODES[mode].name}失败（HTTP ${r.status}）：${url}`);
+    const tid = url.match(/\/api\/files\/([^/]+)\//);
+    if (!tid) throw new TexlateError(`无法从译文地址解析任务 ID：${url}`);
+    shownTask.set(baseOf(id), tid[1]);
     return r.response;
   }
 
@@ -275,7 +280,7 @@
   // 故按文件名前缀找模块、按形状找 store（get/set/sub）与阅读器 atom 组。
   // 以内联 module 注入页面：import() 必须在页面 realm 里解析，才拿得到同一 store 实例。
   const PAGE_HELPER = `
-    window.__texlateReloadPdf = async () => {
+    const viewerState = async () => {
       const urls = [
         ...performance.getEntriesByType('resource').map((e) => e.name),
         ...[...document.querySelectorAll('link[rel=modulepreload], script[src]')].map((l) => l.href || l.src),
@@ -294,11 +299,19 @@
         (v) => v && typeof v === 'object' && 'pdfError' in v && 'pdfViewer' in v && 'loadedCanonicalId' in v,
       );
       if (!store || !atoms) throw new Error('找不到阅读器状态 store/atom（站点改版？）');
+      return { store, atoms };
+    };
+    window.__texlateViewer = async () => {
+      const { store, atoms } = await viewerState();
+      return store.get(atoms.pdfViewer);
+    };
+    window.__texlateReloadPdf = async () => {
+      const { store, atoms } = await viewerState();
       store.set(atoms.pdfError, new Error('texlate: reload'));
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       store.set(atoms.pdfError, null);
     };`;
-  // 首次热切换时才注入：document-start 时 <html> 可能尚不存在
+  // 首次使用时才注入：document-start 时 <html> 可能尚不存在
   async function pageHelper() {
     if (typeof W.__texlateReloadPdf !== 'function') {
       const el = document.createElement('script');
@@ -308,7 +321,7 @@
       el.remove();
       await waitFor(() => typeof W.__texlateReloadPdf === 'function', '注入页面辅助脚本', 5000);
     }
-    return W.__texlateReloadPdf;
+    return { reload: W.__texlateReloadPdf, viewer: W.__texlateViewer };
   }
 
   // 完成后按滚动比例恢复阅读位置（中英页数不同，只能近似对齐）
@@ -320,7 +333,8 @@
     // 标记旧页节点：新 PDFViewer 复用容器但重建页节点，未带标记的页出现文字层即新文档已渲染
     // （首页未必在视口内，故不限定页码）
     document.querySelectorAll('.paperBody .page').forEach((pg) => (pg.dataset.texlateStale = '1'));
-    await (await pageHelper())();
+    clearCiteMarks();
+    await (await pageHelper()).reload();
     await waitFor(() => pdfLoads > before, '阅读器重新载入 PDF');
     await waitFor(
       () => document.querySelector('.paperBody .page:not([data-texlate-stale]) .textLayer span'),
@@ -336,6 +350,194 @@
     }, '页面布局稳定');
     nb.scrollTop = ratio * (nb.scrollHeight - nb.clientHeight);
   }
+
+  // ------------------------------------------------------------ AI 侧边栏引用跳转（中文版）
+
+  // alphaXiv 的引用按钮带 data-citation=[paper, page, startText, endText]。点击后，阅读器在已
+  // 载入 PDF 的文字里匹配英文 startText…endText，命中则高亮并滚动；英文版、对照版含英文原文，
+  // 能命中，中文版匹配不上，只能跳到页码。中文模式下本脚本在捕获阶段接管点击：
+  // 英文引文 → TeXlate 段落 seq（与各段英文源码比对）→ 中文 PDF 里该段的标记内容
+  // （TeXlate 编译时写入，MCID = 50000 + seq）→ 滚动并高亮。
+  const MCID_BASE = 50000;
+  const MAX_CITE_SEQS = 8; // 引文跨段时最多高亮的段数
+  const alignCache = new Map(); // 任务 ID → Promise<{chunks, seqpos}>
+
+  const skeleton = (s) => s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+  // LaTeX 源码 → 近似排版文字：去注释、引用类命令连同参数、其余命令名（保留参数里的文字）
+  function latexText(src) {
+    return src
+      .replace(/(^|[^\\])%.*$/gm, '$1')
+      .replace(/\\(?:cite[a-zA-Z]*|[a-zA-Z]*ref|label|url|href)\*?(?:\[[^\]]*\])*\{[^}]*\}/g, ' ')
+      .replace(/\\[a-zA-Z@]+\*?/g, ' ');
+  }
+
+  async function loadAlignment(tid) {
+    const chunks = [];
+    for (let offset = 0; ; offset += 500) {
+      const { status, body } = await gmJson('GET', `/api/task/${tid}/chunks?offset=${offset}&limit=500`);
+      if (status !== 200) throw new TexlateError(`读取段落原文失败（HTTP ${status}）：${JSON.stringify(body)}`);
+      for (const c of body.chunks) chunks.push({ seq: c.seq, skel: skeleton(latexText(c.en)) });
+      if (offset + 500 >= body.total) break;
+    }
+    const { status, body } = await gmJson('GET', `/api/task/${tid}/reader`);
+    if (status !== 200) throw new TexlateError(`读取段落位置失败（HTTP ${status}）：${JSON.stringify(body)}`);
+    return { chunks, seqpos: body.seqpos || {} };
+  }
+
+  function alignmentFor(tid) {
+    if (!alignCache.has(tid)) {
+      // 失败不缓存，下次点击重新读取
+      alignCache.set(tid, loadAlignment(tid).catch((e) => (alignCache.delete(tid), Promise.reject(e))));
+    }
+    return alignCache.get(tid);
+  }
+
+  function lexGreater(a, b) {
+    const i = a.findIndex((v, j) => v !== b[j]);
+    return i >= 0 && a[i] > b[i];
+  }
+
+  // 按 12 字符片段（步长 3）的命中比例选段；PDF 断词连字符、空格与连字在骨架里都已抹平。
+  // 同分时优先 seq ≥ minSeq（引文结尾不早于开头），再优先英文页码接近 pageHint 的段
+  function locate(al, text, pageHint, minSeq = -1) {
+    const q = skeleton(text || '');
+    if (q.length < 6) return null;
+    const k = Math.min(12, q.length);
+    const grams = [];
+    for (let i = 0; i + k <= q.length; i += 3) grams.push(q.slice(i, i + k));
+    let best = null;
+    for (const c of al.chunks) {
+      const hits = c.skel.includes(q) ? grams.length : grams.filter((g) => c.skel.includes(g)).length;
+      if (!hits) continue;
+      const o = al.seqpos[c.seq] && al.seqpos[c.seq].o;
+      const key = [hits, c.seq >= minSeq ? 1 : 0, o ? -Math.abs(o.page - pageHint) : -1e9];
+      if (!best || lexGreater(key, best.key)) best = { seq: c.seq, key };
+    }
+    return best && best.key[0] / grams.length >= 0.5 ? best.seq : null;
+  }
+
+  // 英文页 → 中文页：取英文页内（或之前最近）首段在中文 PDF 里的页
+  function zhPageFor(al, enPage, numPages) {
+    let pick = null;
+    for (const p of Object.values(al.seqpos)) {
+      if (!p.o || !p.t || p.o.page > enPage) continue;
+      if (!pick || p.o.page > pick.o.page || (p.o.page === pick.o.page && p.o.fraction < pick.o.fraction)) pick = p;
+    }
+    return Math.min(numPages, Math.max(1, pick ? pick.t.page : enPage));
+  }
+
+  function pageOrder(first, n) {
+    const out = [first];
+    for (let d = 1; out.length < n; d++) {
+      if (first - d >= 1) out.push(first - d);
+      if (first + d <= n) out.push(first + d);
+    }
+    return out;
+  }
+
+  // 在中文 PDF 里找这些段的标记内容，返回首个命中页的逐行矩形（PDF 坐标）
+  async function findMarked(pdf, seqs, pages) {
+    const want = seqs.map((s) => `_mc${MCID_BASE + s}`);
+    for (const p of pages) {
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent({ includeMarkedContent: true });
+      const stack = [];
+      const lines = new Map();
+      for (const it of tc.items) {
+        if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') {
+          stack.push(!!it.id && want.some((w) => it.id.endsWith(w)));
+          continue;
+        }
+        if (it.type === 'endMarkedContent') {
+          stack.pop();
+          continue;
+        }
+        if (!it.str || !it.str.trim() || !stack.includes(true)) continue;
+        const [, , , , x, y] = it.transform;
+        const st = tc.styles[it.fontName] || {};
+        const top = y + it.height * (st.ascent || 0.85);
+        const bottom = y + it.height * (st.descent || -0.2);
+        const key = Math.round(y);
+        const ln = lines.get(key);
+        if (ln) {
+          ln.x1 = Math.min(ln.x1, x);
+          ln.x2 = Math.max(ln.x2, x + it.width);
+          ln.y1 = Math.min(ln.y1, bottom);
+          ln.y2 = Math.max(ln.y2, top);
+        } else lines.set(key, { x1: x, x2: x + it.width, y1: bottom, y2: top });
+      }
+      if (lines.size) return { pageNum: p, rects: [...lines.values()], view: page.view };
+    }
+    return null;
+  }
+
+  function clearCiteMarks() {
+    document.querySelectorAll('[data-texlate-cite]').forEach((el) => el.remove());
+  }
+
+  // 高亮按页面百分比定位，缩放后仍对齐（pdf.js 重绘该页时会清掉，与原生高亮的持续时长不同）
+  function showMarked(viewer, hit) {
+    clearCiteMarks();
+    const pv = viewer.getPageView(hit.pageNum - 1);
+    const [vx0, vy0, vx1, vy1] = hit.view;
+    const w = vx1 - vx0;
+    const h = vy1 - vy0;
+    for (const r of hit.rects) {
+      const el = document.createElement('div');
+      el.dataset.texlateCite = '1';
+      el.style.cssText =
+        'position:absolute;pointer-events:none;z-index:3;border-radius:2px;background:rgba(255,200,0,.38);mix-blend-mode:multiply;' +
+        `left:${((r.x1 - vx0) / w) * 100}%;top:${((vy1 - r.y2) / h) * 100}%;` +
+        `width:${((r.x2 - r.x1) / w) * 100}%;height:${((r.y2 - r.y1) / h) * 100}%`;
+      pv.div.appendChild(el);
+    }
+    const top = Math.max(...hit.rects.map((r) => r.y2));
+    // 段首上方留出约 1/6 页，免得高亮贴在工具栏下沿
+    viewer.scrollPageIntoView({ pageNumber: hit.pageNum, destArray: [null, { name: 'XYZ' }, null, Math.min(vy1, top + h / 6), null] });
+  }
+
+  async function jumpToCitation(id, page, startText, endText) {
+    const tid = shownTask.get(baseOf(id));
+    if (!tid) throw new TexlateError('中文版尚未载入，无法定位引用');
+    const al = await alignmentFor(tid);
+    const viewer = await (await pageHelper()).viewer();
+    if (!viewer || !viewer.pdfDocument) throw new TexlateError('阅读器尚未就绪，无法定位引用');
+    const pdf = viewer.pdfDocument;
+    const s0 = locate(al, startText, page);
+    const near = zhPageFor(al, page, pdf.numPages);
+    if (s0 === null) {
+      clearCiteMarks();
+      viewer.scrollPageIntoView({ pageNumber: near });
+      ui.done(`未能在中文版中定位这段引文，已跳到对应页（第 ${near} 页）`);
+      return;
+    }
+    const s1 = locate(al, endText, page, s0);
+    const last = s1 !== null && s1 >= s0 && s1 - s0 < MAX_CITE_SEQS ? s1 : s0;
+    const seqs = Array.from({ length: last - s0 + 1 }, (_, i) => s0 + i);
+    const t = al.seqpos[s0] && al.seqpos[s0].t;
+    const hit = await findMarked(pdf, seqs, pageOrder(t ? t.page : near, pdf.numPages));
+    if (!hit) throw new TexlateError(`中文 PDF 中找不到第 ${s0} 段的位置标记（任务 ${tid}）`);
+    showMarked(viewer, hit);
+  }
+
+  // 捕获阶段先于 React 的根节点监听执行；不属于中文模式当前论文的引用照常交给 alphaXiv
+  document.addEventListener(
+    'click',
+    (ev) => {
+      const el = ev.target instanceof Element ? ev.target.closest('[data-citation]') : null;
+      const id = paperId();
+      if (!el || !id || modeOf(id) !== 'zh' || !document.querySelector('.paperBody .page')) return;
+      const cite = JSON.parse(el.getAttribute('data-citation'));
+      if (!Array.isArray(cite)) throw new TexlateError(`无法识别的引用数据：${el.getAttribute('data-citation')}`);
+      const [paper, page, startText, endText] = cite;
+      if (paper && baseOf(String(paper)) !== baseOf(id)) return;
+      ev.stopPropagation();
+      ev.preventDefault();
+      jumpToCitation(id, Number(page) || 1, startText, endText).catch(ui.error);
+    },
+    true,
+  );
 
   // ------------------------------------------------------------ 工具栏切换钮
 

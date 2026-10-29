@@ -20,3 +20,12 @@
   证据：WorldCast（238 块）翻译期间，61 个请求降级到 step-5-preview，用时 914 s；1502.02761 在 Zen 正常服务时只用 138 s。
 - **调用 OpenRouter 免费模型时显式关闭推理（Magpie 成员写 `:none`）。**
   原因：默认推理下，单批输出 6k–15k 推理 token，导致超时、空内容和占位符损坏；关闭后，dots 从 94–108 s 降到 11 s，nemotron-ultra 从 66–143 s 降到 16 s，质量仍在第一档。证据：`docs/research/2026-10-28-model-selection.md`。
+
+## 2026-10-29
+
+- **在 alphaXiv 的 React 事件之前接管点击，要在 `document` 上注册捕获阶段监听并 `stopPropagation`。**
+  原因：React 17+ 的监听挂在根容器上，`document` 捕获阶段先于它执行。引用按钮的处理函数从 props 闭包取引文，改 DOM 属性影响不到它，只能整体接管。
+- **TeXlate 段级缓存命中会绕过 `validate_pair`，新加的译文校验规则必须同时注册为拦截网（`CACHE_VETO_RULES` + `_INTERCEPT_NETS`）。**
+  证据：只加规则时，`prefer=fresh` 重跑 NeoVerse 仍从缓存取回 `公寓_发布_…` 坏译文，编译照样失败。
+- **对照版从 `base/` 重新拼装，主编译 fixloop 在 `build-zh` 里做的修复带不过来；对照版编译不干净时要再跑一次 fixloop。**
+  证据：NeoVerse 中文版靠 ifsym→marvosym 替换编译成功，对照版仍因 `ifsym10` 无字体失败，加 fixloop 后 25 页成功。

@@ -26,6 +26,7 @@
 - alphaXiv 阅读器是 pdf.js `PDFViewer`。PDF 经全局 `fetch` 从 `pdfs.assets.alphaxiv.org/{id}.pdf` 取得，并缓存在 CacheStorage `alphaxiv-pdfs-v1`。脚本在中文或对照模式下改为返回 TeXlate 的 PDF，同时不让译文写入 alphaXiv 的缓存。
 - 热切换：阅读器加载 PDF 的 effect 依赖 `[canonicalId, pdfError]`。脚本经页面的 jotai store 把 `pdfError` 置错再清空，阅读器即重新取 PDF；切换后按滚动比例恢复阅读位置。
 - TeXlate 用 LaTeX 重新编译，PDF 内的 hyperref 链接得以保留，所以 alphaXiv 的引用解析在中文版上照常工作。
+- AI 侧边栏的引用跳转靠在 PDF 文字里匹配英文引文，中文版里匹配不上。中文模式下脚本接管这类点击：先把英文引文对应到 TeXlate 的段落，再按 TeXlate 写进中文 PDF 的段落标记找到位置，滚动并高亮。英文版和对照版仍用 alphaXiv 原生跳转。
 
 详见 [docs/subsystems/](docs/subsystems/README.md)。
 
@@ -34,6 +35,8 @@
 - 只适用于提供 LaTeX 源码的 arXiv 论文。
 - 依赖 alphaXiv 前端的内部结构（模块文件名前缀、jotai atom 形状、工具栏 aria-label）；alphaXiv 改版后可能失效，失败会在按钮下方显示原因。
 - 中英页数不同，切换后的阅读位置只是近似对齐。
+- 中文模式下，悬停引用按钮时的预览图仍按英文页码截取中文 PDF，内容可能对不上；点击跳转不受影响。
+- 引用跳转只定位到段落；引文落在公式、表格或图注里时可能找不到对应段，此时跳到换算后的页并提示。
 
 ## 许可
 

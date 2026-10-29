@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-在 `alphaxiv.org` 页面内完成三件事：替换阅读器拿到的 PDF 字节；不刷新页面地触发阅读器重新加载；提供工具栏切换钮。翻译和编译都交给 TeXlate，脚本自身不处理 PDF 内容。
+在 `alphaxiv.org` 页面内完成四件事：替换阅读器拿到的 PDF 字节；不刷新页面地触发阅读器重新加载；提供工具栏切换钮；中文模式下接管 AI 侧边栏的引用跳转。翻译和编译都交给 TeXlate，脚本自身不处理 PDF 内容。
 
 ## 真源
 
@@ -25,6 +25,13 @@
    - 调用注入页面的 `__texlateReloadPdf`：经 jotai store 先把 `pdfError` 置为错误，等两帧再清空。
    - 等待 `pdfLoads` 增加，且出现未标记的页文字层。
    - 等页面布局稳定后，恢复滚动比例。
+4. 引用跳转（仅 zh 模式）：
+   - alphaXiv 引用按钮带 `data-citation=[paper, page, startText, endText]`，原生逻辑在已载入 PDF 的文字里匹配英文引文。英文版和对照版含原文，能命中；中文版不含，只能跳到英文页码。
+   - 脚本在 `document` 捕获阶段拦截点击（先于 React 根节点监听）。引用别的论文、或不在 zh 模式时不拦截。
+   - 英文引文 → 段落 seq：读取 TeXlate `/api/task/{tid}/chunks`（各段英文源码）与 `/reader`（`seqpos`，各段在原文与译文 PDF 中的页和位置）。引文与段落源码都化为「NFKC + 小写 + 只留字母数字」的骨架，按 12 字符片段命中比例选段，同分时优先英文页码接近的段。
+   - seq → 中文位置：TeXlate 编译时给每段写入标记内容 `MCID = 50000 + seq`。脚本用 `getTextContent({includeMarkedContent:true})` 从 `seqpos` 给出的译文页开始找该标记，取其中文字的逐行矩形。
+   - 按页面百分比画高亮（缩放后仍对齐），并滚到段首上方约 1/6 页处。
+   - 找不到对应段时跳到换算后的中文页，并在按钮下方提示「未能定位」；找到段却找不到标记时报错。
 
 ## alphaXiv 内部依赖点（改版风险）
 
@@ -36,6 +43,8 @@
 | 阅读器加载 effect 的依赖为 `[canonicalId, pdfError]` | 只能通过行为验证（端到端测试） |
 | 工具栏锚点 | `button[aria-label="Share paper"]` 或 `button[aria-label="分享论文"]` |
 | 滚动容器与页节点 | `.paperBody`、`.page`、`.textLayer` |
+| 引用按钮属性 `data-citation`（JSON 数组 `[paper, page, startText, endText]`） | `closest('[data-citation]')` |
+| 阅读器 `pdfViewer`（`getPageView`、`scrollPageIntoView`、`pdfDocument`） | `PAGE_HELPER` 的 `__texlateViewer`，取自同一 atom 组的 `pdfViewer` |
 
 ## 约束
 
@@ -44,7 +53,10 @@
 
 ## 验证
 
-`uv run --with playwright python -I tests/e2e/run_modes.py <id>`，见 [代码规范与验收](../code-standards.md)。
+- 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。
+- 引用跳转：`uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py <id> [n]`。引文取自英文 PDF 的抽取文字（保留断词连字符），注入真实格式的 `data-citation` 按钮后点击；判据是高亮区汉字与期望段译文的重合率 ≥ 0.6。没有走真实 AI 对话。
+
+见 [代码规范与验收](../code-standards.md)。
 
 ## 失败行为
 

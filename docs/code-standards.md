@@ -14,6 +14,7 @@
 ```sh
 node --check userscript/alphaxiv-texlate.user.js
 uv run --with playwright python -I tests/e2e/run_modes.py 2605.05118   # 需本机 TeXlate 有该论文译文
+uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py 2601.00393 8   # 中文模式引用跳转
 ```
 
 端到端测试在真实 alphaXiv 页面上依次切换「双 → 中 → EN」。失败条件：整页刷新、文字层语言不符或出现 pageerror，任一发生即以非零状态退出。真实 Tampermonkey 环境下的验证见 README「限制」，尚未自动化。

@@ -17,6 +17,26 @@ from harness import HOST, has_cjk, install, visible_text, wait_switch_done  # no
 
 EXPECT_CJK = {"bi": True, "zh": True, "en": False}
 
+# 切换前塞一条假的引用预览缓存与假高亮（模拟上一模式下悬停/点击过引用），切换后两者都必须被清掉；
+# 否则 alphaXiv 会按上一个 PDF 的页码与坐标跳转（2026-10-29 用户实测）。
+CITE_STATE = """async (seed) => {
+  const urls = [...performance.getEntriesByType('resource').map((e) => e.name),
+    ...[...document.querySelectorAll('link[rel=modulepreload], script[src]')].map((l) => l.href || l.src)];
+  const mod = async (prefix) => import(urls.find((x) => new URL(x, location.href).pathname.startsWith('/assets/' + prefix)));
+  const api = Object.values(await mod('api-typed-'));
+  const qc = api.filter((v) => typeof v === 'function' && v.length === 0 && /^\\(\\)=>[\\w$]+\\?\\?=[\\w$]+\\(\\)$/.test(String(v)))
+    .map((f) => f()).find((c) => c && typeof c.removeQueries === 'function');
+  const store = api.find((v) => v && v.get && v.set && v.sub);
+  const atoms = Object.values(await mod('paper-citation.atoms-'));
+  const key = ['overview-citation-preview', { canonicalId: 'texlate-test', page: 1, startText: 'a', endText: 'b' }];
+  if (seed) {
+    qc.setQueryData(key, { stale: true });
+    store.set(atoms[0], { pageIndex: 0, rects: [{ x1: 0, y1: 0, x2: 1, y2: 1 }] });
+  }
+  const hl = atoms.some((a) => { const v = store.get(a); return v && 'rects' in v; });
+  return { cached: qc.getQueryData(key) !== undefined, highlight: hl };
+}"""
+
 
 def main() -> int:
     paper = sys.argv[1]
@@ -34,6 +54,9 @@ def main() -> int:
         page.wait_for_timeout(2000)
         page.evaluate("window.__noReload = 1")
         for mode in ("bi", "zh", "en"):
+            seeded = page.evaluate(CITE_STATE, True)
+            if not (seeded["cached"] and seeded["highlight"]):
+                failures.append(f"{mode}: 无法预置引用缓存/高亮（{seeded}）")
             page.locator(HOST + " .main").click()
             page.locator(f"{HOST} .menu button[data-m={mode}]").click()
             wait_switch_done(page)
@@ -43,6 +66,10 @@ def main() -> int:
             no_reload = page.evaluate("window.__noReload === 1")
             tip = page.locator(HOST + " .tip").inner_text()
             print(f"{mode}: pages={pages} cjk={has_cjk(txt)} noReload={no_reload} tip={tip!r}")
+            left = page.evaluate(CITE_STATE, False)
+            print(f"   citation state after switch: {left}")
+            if left["cached"] or left["highlight"]:
+                failures.append(f"{mode}: 切换后旧引用缓存/高亮未清除（{left}）")
             if not no_reload:
                 failures.append(f"{mode}: 页面被整页刷新")
             if has_cjk(txt) != EXPECT_CJK[mode]:

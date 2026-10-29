@@ -25,6 +25,7 @@
    - 调用注入页面的 `__texlateReloadPdf`：经 jotai store 先把 `pdfError` 置为错误，等两帧再清空。
    - 等待 `pdfLoads` 增加，且出现未标记的页文字层。
    - 等页面布局稳定后，恢复滚动比例。
+   - 清除 alphaXiv 的引用预览缓存（react-query 键 `overview-citation-preview`）和已画出的原生引用高亮。预览缓存不区分 PDF，且永不过期，点击跳转直接复用其中的页码与坐标；不清除的话，切换后会按上一个 PDF 定位。
 4. 引用跳转（仅 zh 模式）：
    - alphaXiv 引用按钮带 `data-citation=[paper, page, startText, endText]`，原生逻辑在已载入 PDF 的文字里匹配英文引文。英文版和对照版含原文，能命中；中文版不含，只能跳到英文页码。
    - 脚本在 `document` 捕获阶段拦截点击（先于 React 根节点监听）。引用别的论文、或不在 zh 模式时不拦截。
@@ -45,6 +46,8 @@
 | 滚动容器与页节点 | `.paperBody`、`.page`、`.textLayer` |
 | 引用按钮属性 `data-citation`（JSON 数组 `[paper, page, startText, endText]`） | `closest('[data-citation]')` |
 | 阅读器 `pdfViewer`（`getPageView`、`scrollPageIntoView`、`pdfDocument`） | `PAGE_HELPER` 的 `__texlateViewer`，取自同一 atom 组的 `pdfViewer` |
+| react-query 客户端单例 | `api-typed` 中形如 `()=>c??=make()` 的零参导出，返回值须有 `removeQueries` 和 `getQueryCache().findAll`。路由 context 上的 `queryClient` 是代理，不能用 |
+| 原生引用高亮 atom | `/assets/paper-citation.atoms-*` 模块里当前值形如 `{pageIndex, rects}` 的 atom |
 
 ## 约束
 
@@ -53,7 +56,7 @@
 
 ## 验证
 
-- 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。
+- 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。每次切换前预置一条假的预览缓存和假高亮，切换后断言两者都已清除。
 - 引用跳转：`uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py <id> [n]`。引文取自英文 PDF 的抽取文字（保留断词连字符），注入真实格式的 `data-citation` 按钮后点击；判据是高亮区汉字与期望段译文的重合率 ≥ 0.6。没有走真实 AI 对话。
 
 见 [代码规范与验收](../code-standards.md)。

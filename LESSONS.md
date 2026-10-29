@@ -29,3 +29,8 @@
   证据：只加规则时，`prefer=fresh` 重跑 NeoVerse 仍从缓存取回 `公寓_发布_…` 坏译文，编译照样失败。
 - **对照版从 `base/` 重新拼装，主编译 fixloop 在 `build-zh` 里做的修复带不过来；对照版编译不干净时要再跑一次 fixloop。**
   证据：NeoVerse 中文版靠 ifsym→marvosym 替换编译成功，对照版仍因 `ifsym10` 无字体失败，加 fixloop 后 25 页成功。
+- **换 PDF 后要清掉 alphaXiv 的引用预览缓存和原生高亮。**
+  原因：预览缓存键只有论文、页码和引文，`staleTime` 无限；点击跳转直接复用缓存里的匹配页码与坐标。证据：用户实测，对照模式下预览显示英文 PDF 的第 18 页，英文模式下第 27 页显示的却是对照版的参考文献，跳转与高亮都落到错误位置。
+- **找 react-query 客户端要验证形状，不能只看属性名。**
+  证据：`auth-client` 路由 context 上的 `queryClient` 是代理，任意属性都返回函数，`getQueryCache()` 返回 Promise，`removeQueries` 调用不报错也不生效。真实单例在 `api-typed` 的 `()=>c??=make()` 导出里，其中有 446 条页面自己的查询。
+

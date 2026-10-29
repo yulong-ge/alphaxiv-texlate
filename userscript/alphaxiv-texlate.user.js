@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.0
+// @version      0.5.1
 // @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，PDF 原地热切换为中文版或中英对照版
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
@@ -280,16 +280,16 @@
   // 故按文件名前缀找模块、按形状找 store（get/set/sub）与阅读器 atom 组。
   // 以内联 module 注入页面：import() 必须在页面 realm 里解析，才拿得到同一 store 实例。
   const PAGE_HELPER = `
-    const viewerState = async () => {
+    const pick = (prefix) => {
       const urls = [
         ...performance.getEntriesByType('resource').map((e) => e.name),
         ...[...document.querySelectorAll('link[rel=modulepreload], script[src]')].map((l) => l.href || l.src),
       ];
-      const pick = (prefix) => {
-        const u = urls.find((x) => new URL(x, location.href).pathname.startsWith('/assets/' + prefix));
-        if (!u) throw new Error('找不到 alphaXiv 模块 ' + prefix + '（站点改版？）');
-        return u;
-      };
+      const u = urls.find((x) => new URL(x, location.href).pathname.startsWith('/assets/' + prefix));
+      if (!u) throw new Error('找不到 alphaXiv 模块 ' + prefix + '（站点改版？）');
+      return u;
+    };
+    const viewerState = async () => {
       const api = await import(pick('api-typed-'));
       const enums = await import(pick('pdfjs-enums-'));
       const store = Object.values(api).find(
@@ -299,7 +299,28 @@
         (v) => v && typeof v === 'object' && 'pdfError' in v && 'pdfViewer' in v && 'loadedCanonicalId' in v,
       );
       if (!store || !atoms) throw new Error('找不到阅读器状态 store/atom（站点改版？）');
-      return { store, atoms };
+      // react-query 客户端单例取自 api-typed 导出的 getQueryClient（形如 ()=>c??=make()）。
+      // 路由 context 上的 queryClient 是代理（任意属性都返回 Promise），不能用
+      const queryClient = Object.values(api)
+        .filter((v) => typeof v === 'function' && v.length === 0 && /^\\(\\)=>[\\w$]+\\?\\?=[\\w$]+\\(\\)$/.test(String(v)))
+        .map((f) => f())
+        .find((c) => c && typeof c.removeQueries === 'function' && typeof c.getQueryCache().findAll === 'function');
+      if (!queryClient) throw new Error('找不到 react-query 客户端（站点改版？）');
+      return { store, atoms, queryClient };
+    };
+    // 引用预览缓存键 [overview-citation-preview, {canonicalId, page, startText, endText}] 不含
+    // PDF 版本，且永不过期；它缓存的匹配页码与坐标来自缓存时的 PDF，点击跳转也直接复用。
+    // 换 PDF 后必须清掉，否则预览和跳转都按上一个模式的 PDF 定位
+    window.__texlateClearCitationCache = async () => {
+      const { store, queryClient } = await viewerState();
+      queryClient.removeQueries({ queryKey: ['overview-citation-preview'] });
+      // 已画出的原生引用高亮 {pageIndex, rects} 同样是旧 PDF 的坐标；该模块三个 atom 都是
+      // 无名 null 初值，按当前值的形状认出高亮 atom
+      const atomsMod = await import(pick('paper-citation.atoms-'));
+      for (const a of Object.values(atomsMod)) {
+        const v = store.get(a);
+        if (v && typeof v === 'object' && 'rects' in v && 'pageIndex' in v) store.set(a, null);
+      }
     };
     window.__texlateViewer = async () => {
       const { store, atoms } = await viewerState();
@@ -321,7 +342,7 @@
       el.remove();
       await waitFor(() => typeof W.__texlateReloadPdf === 'function', '注入页面辅助脚本', 5000);
     }
-    return { reload: W.__texlateReloadPdf, viewer: W.__texlateViewer };
+    return { reload: W.__texlateReloadPdf, viewer: W.__texlateViewer, clearCitations: W.__texlateClearCitationCache };
   }
 
   // 完成后按滚动比例恢复阅读位置（中英页数不同，只能近似对齐）
@@ -349,6 +370,8 @@
       return stable;
     }, '页面布局稳定');
     nb.scrollTop = ratio * (nb.scrollHeight - nb.clientHeight);
+    // 新 PDF 已渲染后再清：此前发起的预览计算仍可能基于旧 PDF
+    await (await pageHelper()).clearCitations();
   }
 
   // ------------------------------------------------------------ AI 侧边栏引用跳转（中文版）

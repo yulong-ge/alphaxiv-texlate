@@ -13,7 +13,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
-from harness import HOST, has_cjk, install, visible_text, wait_switch_done  # noqa: E402
+from harness import HOST, PDF_PAGE, PDF_TEXT, has_cjk, install, visible_text, wait_switch_done  # noqa: E402
 
 EXPECT_CJK = {"bi": True, "zh": True, "en": False}
 
@@ -22,18 +22,36 @@ EXPECT_CJK = {"bi": True, "zh": True, "en": False}
 CITE_STATE = """async (seed) => {
   const urls = [...performance.getEntriesByType('resource').map((e) => e.name),
     ...[...document.querySelectorAll('link[rel=modulepreload], script[src]')].map((l) => l.href || l.src)];
-  const mod = async (prefix) => import(urls.find((x) => new URL(x, location.href).pathname.startsWith('/assets/' + prefix)));
-  const api = Object.values(await mod('api-typed-'));
+  const mod = async (prefix) => {
+    const url = urls.find((x) => new URL(x, location.href).pathname.startsWith('/assets/' + prefix));
+    return url ? import(url) : null;
+  };
+  const apiMod = await mod('api-typed-');
+  const api = Object.values(apiMod);
   const qc = api.filter((v) => typeof v === 'function' && v.length === 0 && /^\\(\\)=>[\\w$]+\\?\\?=[\\w$]+\\(\\)$/.test(String(v)))
     .map((f) => f()).find((c) => c && typeof c.removeQueries === 'function');
-  const store = api.find((v) => v && v.get && v.set && v.sub);
-  const atoms = Object.values(await mod('paper-citation.atoms-'));
+  const storeMod = await mod('bind-mutations-');
+  const store = [storeMod, apiMod].filter(Boolean).flatMap((m) => Object.values(m))
+    .find((v) => v && v.get && v.set && v.sub);
+  const atomMod = (await mod('pdf.atoms-')) || (await mod('pdfjs-enums-'));
+  const atomGroup = atomMod && Object.values(atomMod).find(
+    (v) => v && typeof v === 'object' && 'pdfError' in v && 'pdfViewer' in v && 'loadedCanonicalId' in v,
+  );
+  const citationMod = await mod('paper-citation.atoms-');
+  const atoms = [
+    ...['citationPreview', 'currentSelection', 'activeAnchor', 'activeFocus']
+      .filter((k) => atomGroup && k in atomGroup).map((k) => atomGroup[k]),
+    ...(citationMod ? Object.values(citationMod) : []),
+  ];
   const key = ['overview-citation-preview', { canonicalId: 'texlate-test', page: 1, startText: 'a', endText: 'b' }];
   if (seed) {
     qc.setQueryData(key, { stale: true });
-    store.set(atoms[0], { pageIndex: 0, rects: [{ x1: 0, y1: 0, x2: 1, y2: 1 }] });
+    if (atoms[0]) store.set(atoms[0], { pageIndex: 0, rects: [{ x1: 0, y1: 0, x2: 1, y2: 1 }] });
   }
-  const hl = atoms.some((a) => { const v = store.get(a); return v && 'rects' in v; });
+  const hl = atoms.some((a) => {
+    const v = store.get(a);
+    return v && typeof v === 'object' && ('rects' in v || 'pageIndex' in v);
+  });
   return { cached: qc.getQueryData(key) !== undefined, highlight: hl };
 }"""
 
@@ -50,7 +68,7 @@ def main() -> int:
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)[:120]))
         page.goto(f"https://www.alphaxiv.org/pdf/{paper}")
-        page.wait_for_selector(".page .textLayer span", timeout=90_000, state="attached")
+        page.wait_for_selector(PDF_TEXT, timeout=90_000, state="attached")
         page.wait_for_timeout(2000)
         page.evaluate("window.__noReload = 1")
         for mode in ("bi", "zh", "en"):
@@ -62,7 +80,7 @@ def main() -> int:
             wait_switch_done(page)
             page.wait_for_timeout(2500)
             txt = visible_text(page)
-            pages = page.locator(".paperBody .page").count()
+            pages = page.locator(PDF_PAGE).count()
             no_reload = page.evaluate("window.__noReload === 1")
             tip = page.locator(HOST + " .tip").inner_text()
             print(f"{mode}: pages={pages} cjk={has_cjk(txt)} noReload={no_reload} tip={tip!r}")

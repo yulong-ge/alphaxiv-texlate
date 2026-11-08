@@ -40,14 +40,14 @@
 | --- | --- |
 | PDF 地址前缀 `pdfs.assets.alphaxiv.org` | 常量 `PDF_PREFIX` |
 | 缓存名 `alphaxiv-pdfs-v1` | 不按名字识别，改写 `Cache.prototype` 时按 URL 判断 |
-| jotai store 与阅读器 atom 组 | `PAGE_HELPER`：按 `/assets/api-typed-*` 和 `/assets/pdfjs-enums-*` 前缀定位模块；store 取同时有 `get/set/sub` 的导出，atom 组取同时有 `pdfError/pdfViewer/loadedCanonicalId` 键的导出 |
+| jotai store 与阅读器 atom 组 | `PAGE_HELPER`：新壳按 `/assets/bind-mutations-*` 与 `/assets/pdf.atoms-*` 定位，旧壳回退 `/assets/api-typed-*` 与 `/assets/pdfjs-enums-*`；store 取同时有 `get/set/sub` 的导出，atom 组取同时有 `pdfError/pdfViewer/loadedCanonicalId` 键的导出 |
 | 阅读器加载 effect 的依赖为 `[canonicalId, pdfError]` | 只能通过行为验证（端到端测试） |
 | 工具栏锚点 | `button[aria-label="Share paper"]` 或 `button[aria-label="分享论文"]` |
-| 滚动容器与页节点 | `.paperBody`、`.page`、`.textLayer` |
+| 滚动容器与页节点 | 新壳使用 `[data-scroll-restoration-id="paper-pdf-viewer"]`、`#viewer .page`、`.textLayer`；旧壳使用 `.paperBody`、`.page`、`.textLayer` |
 | 引用按钮属性 `data-citation`（JSON 数组 `[paper, page, startText, endText]`） | `closest('[data-citation]')` |
 | 阅读器 `pdfViewer`（`getPageView`、`scrollPageIntoView`、`pdfDocument`） | `PAGE_HELPER` 的 `__texlateViewer`，取自同一 atom 组的 `pdfViewer` |
 | react-query 客户端单例 | `api-typed` 中形如 `()=>c??=make()` 的零参导出，返回值须有 `removeQueries` 和 `getQueryCache().findAll`。路由 context 上的 `queryClient` 是代理，不能用 |
-| 原生引用高亮 atom | `/assets/paper-citation.atoms-*` 模块里当前值形如 `{pageIndex, rects}` 的 atom |
+| 原生引用高亮 atom | 新壳先清 `pdf.atoms` 的 `citationPreview/currentSelection/activeAnchor/activeFocus`，旧壳再扫描 `/assets/paper-citation.atoms-*` 中当前值形如 `{pageIndex, rects}` 的 atom |
 
 ## 约束
 

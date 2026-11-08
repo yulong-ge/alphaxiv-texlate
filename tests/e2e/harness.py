@@ -14,7 +14,9 @@ from pathlib import Path
 
 USERSCRIPT = Path(__file__).resolve().parents[2] / "userscript" / "alphaxiv-texlate.user.js"
 HOST = "span[data-texlate]"
-FRESH_TEXT = ".paperBody .page:not([data-texlate-stale]) .textLayer span"
+PDF_PAGE = "#viewer .page, .paperBody .page"
+PDF_TEXT = "#viewer .page .textLayer span, .paperBody .page .textLayer span"
+FRESH_TEXT = "#viewer .page:not([data-texlate-stale]) .textLayer span, .paperBody .page:not([data-texlate-stale]) .textLayer span"
 
 SHIM = r"""
 (() => {
@@ -76,6 +78,6 @@ def wait_switch_done(page, timeout_ms: int = 600_000) -> None:
 
 def visible_text(page, limit: int = 4000) -> str:
     return page.eval_on_selector_all(
-        ".page:not([data-texlate-stale]) .textLayer span",
+        "#viewer .page:not([data-texlate-stale]) .textLayer span, .paperBody .page:not([data-texlate-stale]) .textLayer span",
         "els => els.map(e => e.textContent).join('')",
     )[:limit]

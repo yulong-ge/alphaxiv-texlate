@@ -4,7 +4,7 @@
 
 ## 2026-10-28
 
-- **在阅读器客户端渲染出 `.paperBody .page` 之前，不向页面插入任何节点。**
+- **在阅读器客户端渲染出 `.paperBody .page` 或 `#viewer .page` 之前，不向页面插入任何节点。**
   原因：工具栏是服务端渲染后由客户端 hydrate 的，提前插入会触发 React #418。证据：带脚本时出现 pageerror `Minified React error #418`，不带脚本时没有；加入此判断后消失。
 - **切换钮挂在 `<body>` 上用 `position:fixed` 定位，不插进工具栏。**
   原因：插进工具栏会撑宽它，把右端的打印按钮挤出可视区（宽度 1400 px 时实测）。
@@ -33,4 +33,9 @@
   原因：预览缓存键只有论文、页码和引文，`staleTime` 无限；点击跳转直接复用缓存里的匹配页码与坐标。证据：用户实测，对照模式下预览显示英文 PDF 的第 18 页，英文模式下第 27 页显示的却是对照版的参考文献，跳转与高亮都落到错误位置。
 - **找 react-query 客户端要验证形状，不能只看属性名。**
   证据：`auth-client` 路由 context 上的 `queryClient` 是代理，任意属性都返回函数，`getQueryCache()` 返回 Promise，`removeQueries` 调用不报错也不生效。真实单例在 `api-typed` 的 `()=>c??=make()` 导出里，其中有 446 条页面自己的查询。
+
+## 2026-11-08
+
+- **兼容 alphaXiv 时要把阅读器 DOM 和状态模块分别按结构识别。**
+  原因：当前页面使用 `#PDFPane/#viewer`、`[data-scroll-restoration-id="paper-pdf-viewer"]`、`pdf.atoms-*` 和 `bind-mutations-*`；旧脚本只识别 `.paperBody`、`pdfjs-enums-*` 和 `api-typed-*`，导致按钮不挂载、热切换报找不到 store/atom、中文版引用点击不拦截。证据：2204.07137、1804.02717、2302.00670 三页都能加载原始 PDF，但旧选择器全部失败；兼容修复后 2302.00670 三模式热切换通过。
 

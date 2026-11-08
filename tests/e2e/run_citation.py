@@ -22,7 +22,7 @@ from playwright.sync_api import sync_playwright
 from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).parent))
-from harness import HOST, install, wait_switch_done  # noqa: E402
+from harness import HOST, PDF_TEXT, install, wait_switch_done  # noqa: E402
 
 TEXLATE = "http://127.0.0.1:8765"
 MIN_OVERLAP = 0.6
@@ -104,7 +104,7 @@ def main() -> int:
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)[:160]))
         page.goto(f"https://www.alphaxiv.org/pdf/{paper}")
-        page.wait_for_selector(".page .textLayer span", timeout=90_000, state="attached")
+        page.wait_for_selector(PDF_TEXT, timeout=90_000, state="attached")
         page.wait_for_timeout(2000)
         page.locator(HOST + " .main").click()
         page.locator(f"{HOST} .menu button[data-m=zh]").click()

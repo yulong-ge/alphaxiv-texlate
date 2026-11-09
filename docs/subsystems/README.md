@@ -5,3 +5,4 @@
 | userscript | alphaXiv 页面内的 PDF 替换、热重载、工具栏 UI | [userscript.md](userscript.md) |
 | TeXlate 接口 | 脚本与工具调用的 TeXlate HTTP 接口及语义 | [texlate-api.md](texlate-api.md) |
 | 模型路由 | Magpie 分组、gateway key 白名单与模型选型依据 | [model-routing.md](model-routing.md) |
+| 跨仓库联动开发 | alphaXiv 与 TeXlate 的边界、兼容矩阵和联合验收 | [cross-repo-development.md](cross-repo-development.md) |

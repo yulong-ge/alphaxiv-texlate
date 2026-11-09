@@ -36,7 +36,7 @@
 - TeXlate 用 LaTeX 重新编译，PDF 内的 hyperref 链接得以保留，所以 alphaXiv 的引用解析在中文版上照常工作。
 - AI 侧边栏的引用跳转靠在 PDF 文字里匹配英文引文，中文版里匹配不上。中文模式下脚本接管这类点击：先把英文引文对应到 TeXlate 的段落，再按 TeXlate 写进中文 PDF 的段落标记找到位置，滚动并高亮。英文版和对照版仍用 alphaXiv 原生跳转。
 
-详见 [docs/subsystems/](docs/subsystems/README.md)。
+详见 [docs/subsystems/](docs/subsystems/README.md) 和[跨仓库联动开发](docs/subsystems/cross-repo-development.md)。
 
 ## 限制
 

@@ -13,6 +13,7 @@
 
 ```sh
 node --check userscript/alphaxiv-texlate.user.js
+uv run --with playwright python -I tests/e2e/run_actions.py          # 任务操作隔离测试，不调用模型
 uv run --with playwright python -I tests/e2e/run_modes.py 2605.05118   # 需本机 TeXlate 有该论文译文
 uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py 2601.00393 8   # 中文模式引用跳转
 ```

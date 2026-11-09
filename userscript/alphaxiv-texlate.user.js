@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.6
-// @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，划线翻译默认选择中文
+// @version      0.6.0
+// @description  在 alphaXiv 阅读器内切换译文、全文重译、管理翻译任务和下载 PDF，划线翻译默认中文
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
 // @run-at       document-start
@@ -73,7 +73,11 @@
   let currentId = null;
   // 论文（去版本号）→ 阅读器当前所载译文 PDF 的 TeXlate 任务 ID
   const shownTask = new Map();
-  const paperId = () => currentId || idFromLocation();
+  const paperId = () => {
+    const route = idFromLocation();
+    return route && currentId && baseOf(route) === baseOf(currentId) &&
+      (!/v\d+$/.test(route) || route === currentId) ? currentId : route;
+  };
 
   // ------------------------------------------------------------ TeXlate 调用
 
@@ -117,12 +121,6 @@
     return { zhUrl: body.data.zhCN, biUrl: body.data.bi || '', msg: body.msg };
   }
 
-  async function arxivStatus(id) {
-    const { status, body } = await gmJson('GET', '/api/arxivStatus/' + encodeURIComponent(id));
-    if (status !== 200) throw new TexlateError(`查询进度失败（HTTP ${status}）：${JSON.stringify(body)}`);
-    return body; // {status: start|finished|failed|error|fault, info, progress, task_id}
-  }
-
   async function startTranslate(id) {
     const { status, body } = await gmJson('POST', `/api/arxiv/${encodeURIComponent(id)}/translate`, { json: {} });
     if (status !== 200 && status !== 202) {
@@ -145,26 +143,176 @@
     return r.response;
   }
 
-  async function taskWarnings(taskId) {
-    const { status, body } = await gmJson('GET', `/api/task/${taskId}`);
+  const ACTIVE_TASKS = new Set(['queued', 'fetching', 'parsing', 'translating', 'compiling']);
+  const RETRY_TASKS = new Set(['partial', 'fault', 'cancelled', 'interrupted', 'needs_auth']);
+  const taskSnapshots = new Map();
+  const taskWatches = new Map();
+  let actionPending = false;
+
+  function samePaper(id) {
+    const routeId = idFromLocation();
+    return !!routeId && baseOf(routeId) === baseOf(id) && (!/v\d+$/.test(routeId) || routeId === id);
+  }
+
+  async function taskSnapshot(taskId) {
+    const { status, body } = await gmJson('GET', `/api/task/${encodeURIComponent(taskId)}`);
     if (status !== 200) throw new TexlateError(`查询任务失败（HTTP ${status}）：${JSON.stringify(body)}`);
-    return (body.warnings || []).filter((w) => w.startsWith('[bilingual]'));
+    return body;
+  }
+
+  async function latestTask(id) {
+    const { status, body } = await gmJson('GET', '/api/arxivStatus/' + encodeURIComponent(id));
+    if (status === 404 && body.error === 'not_found') return null;
+    if (status !== 200 || !body.task_id) {
+      throw new TexlateError(`查询进度失败（HTTP ${status}）：${body.detail || JSON.stringify(body)}`);
+    }
+    return taskSnapshot(body.task_id);
+  }
+
+  function rememberTask(id, snapshot) {
+    const previous = taskSnapshots.get(id);
+    if (previous && snapshot && (previous.created_at > snapshot.created_at ||
+        (previous.task_id === snapshot.task_id && previous.updated_at > snapshot.updated_at))) return;
+    taskSnapshots.set(id, snapshot);
+    if (samePaper(id)) ui.refresh();
+  }
+
+  function taskDescription(snapshot) {
+    if (!snapshot) return '尚未翻译';
+    const names = {
+      queued: '排队中', fetching: '获取源码', parsing: '解析中', translating: '翻译中',
+      compiling: '编译中', done: '已完成', partial: '部分完成', fault: '失败',
+      cancelled: '已取消', interrupted: '已中断', needs_auth: '需要认证',
+    };
+    const c = snapshot.counters;
+    const detail = c && c.total ? ` · ${c.done}/${c.total} 段${c.failed ? `，${c.failed} 段失败` : ''}` : '';
+    return `${names[snapshot.status] || snapshot.status} · ${snapshot.progress || 0}%${detail}`;
+  }
+
+  async function refreshTask(id) {
+    const snapshot = await latestTask(id);
+    rememberTask(id, snapshot);
+    return snapshot;
+  }
+
+  // 按 task_id 跟踪，避免其他标签页新建任务后把进度和产物串到另一轮。
+  function watchTask(id, taskId) {
+    if (taskWatches.has(taskId)) return taskWatches.get(taskId);
+    const promise = (async () => {
+      const deadline = Date.now() + 2 * 60 * 60 * 1000;
+      for (;;) {
+        const snapshot = await taskSnapshot(taskId);
+        rememberTask(id, snapshot);
+        if (!ACTIVE_TASKS.has(snapshot.status)) {
+          if (snapshot.status === 'cancelled') {
+            if (samePaper(id)) ui.done('翻译任务已取消，原来显示的 PDF 保留');
+            return snapshot;
+          }
+          if (!['done', 'partial'].includes(snapshot.status) || !snapshot.artifacts?.zh_pdf) {
+            throw new TexlateError(`翻译未完成：${snapshot.error?.message || snapshot.message || taskDescription(snapshot)}（任务 ${taskId}）`);
+          }
+          if (samePaper(id)) {
+            ui.done(snapshot.status === 'partial' ? '译文已生成，但有部分内容失败；请查看任务详情' : '全文翻译完成，译文已更新');
+            // 英文阅读保持原样；中文版/对照版在任务完成后原地换入新产物。
+            const mode = modeOf(id);
+            const latest = await latestTask(id);
+            if (samePaper(id) && latest?.task_id === taskId && mode !== 'en' && !busy) {
+              busy = true;
+              ui.refresh();
+              try { await switchTo(mode); }
+              finally { busy = false; ui.refresh(); }
+            }
+          }
+          return snapshot;
+        }
+        if (Date.now() >= deadline) throw new TexlateError(`等待任务超时（${taskId}）；请打开 TeXlate 查看进度`);
+        await sleep(POLL_MS);
+      }
+    })().finally(() => { taskWatches.delete(taskId); ui.refresh(); });
+    taskWatches.set(taskId, promise);
+    return promise;
+  }
+
+  function followTask(id, taskId) {
+    watchTask(id, taskId).catch((err) => {
+      if (samePaper(id)) ui.error(err);
+      else console.error('[alphaxiv-texlate]', err);
+    });
+  }
+
+  async function taskAction(action, id) {
+    if (actionPending) return;
+    actionPending = true;
+    ui.refresh();
+    try {
+      // 操作绑定用户当前看到的任务，不能在点击后悄悄换成其他标签页的新任务。
+      const snapshot = action === 'refresh' ? await refreshTask(id) : taskSnapshots.get(id);
+      if (action === 'refresh') {
+        if (snapshot && ACTIVE_TASKS.has(snapshot.status)) followTask(id, snapshot.task_id);
+        if (samePaper(id)) ui.done(taskDescription(snapshot));
+        return;
+      }
+      if (!snapshot) throw new TexlateError('尚无翻译任务，请先选择中文版或中英对照版');
+      const taskId = snapshot.task_id;
+      if (action === 'cancel' || action === 'retry' || action === 'retranslate') {
+        if (action === 'retranslate' && ACTIVE_TASKS.has(snapshot.status)) {
+          throw new TexlateError('已有翻译任务正在运行，请等待完成或先取消任务');
+        }
+        if (action === 'cancel' && !ACTIVE_TASKS.has(snapshot.status)) throw new TexlateError('当前任务已结束，无需取消');
+        if (action === 'retry' && !RETRY_TASKS.has(snapshot.status)) throw new TexlateError('当前任务不需要重试');
+        const { status, body } = await gmJson('POST', `/api/task/${encodeURIComponent(taskId)}/${action}`, { json: {} });
+        if (status !== 202 && status !== 200) {
+          const hint = action === 'retranslate' && [404, 405].includes(status) ? '请升级 TeXlate，当前服务不支持绕过旧译文缓存的全文重译' : body.detail || JSON.stringify(body);
+          throw new TexlateError(`操作失败（HTTP ${status}）：${hint}`);
+        }
+        if (!body.task_id) throw new TexlateError('TeXlate 未返回任务 ID，无法跟踪操作结果');
+        const next = await taskSnapshot(body.task_id);
+        rememberTask(id, next);
+        if (samePaper(id)) ui.done(action === 'cancel' ? '已取消翻译任务，原来显示的 PDF 保留' : '已提交到 TeXlate，可在菜单查看进度或取消');
+        if (action !== 'cancel') followTask(id, body.task_id);
+        return;
+      }
+      if (action === 'download-zh' || action === 'download-bi') {
+        const mode = action === 'download-bi' ? 'bi' : 'zh';
+        const url = snapshot.artifacts?.[mode === 'bi' ? 'bi_pdf' : 'zh_pdf'];
+        if (!url) throw new TexlateError(`尚无${MODES[mode].name} PDF；请先选择对应模式生成`);
+        const response = await gm('GET', url, { responseType: 'arraybuffer' });
+        if (response.status !== 200) throw new TexlateError(`下载失败（HTTP ${response.status}）`);
+        const blobUrl = URL.createObjectURL(new Blob([response.response], { type: 'application/pdf' }));
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `${baseOf(id).replaceAll('/', '-')}-${mode}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        return;
+      }
+      throw new TexlateError(`未知 TeXlate 操作：${action}`);
+    } finally {
+      actionPending = false;
+      ui.refresh();
+    }
   }
 
   // 对照版按需生成：入队后轮询 bi 地址出现；新增的 [bilingual] warning 即失败原因
   async function ensureBilingual(id) {
-    const st = await arxivStatus(id);
-    const before = (await taskWarnings(st.task_id)).length;
-    const { status, body } = await gmJson('POST', `/api/task/${st.task_id}/bilingual`);
+    const initial = await latestTask(id);
+    if (!initial) throw new TexlateError('尚无翻译任务，无法生成对照版');
+    const taskId = initial.task_id;
+    const before = (initial.warnings || []).filter((w) => w.startsWith('[bilingual]')).length;
+    const { status, body } = await gmJson('POST', `/api/task/${encodeURIComponent(taskId)}/bilingual`);
     if (status !== 202) throw new TexlateError(`提交对照版生成失败（HTTP ${status}）：${body.detail || JSON.stringify(body)}`);
     const t0 = Date.now();
     for (;;) {
-      ui.status(`正在生成中英对照版…（${Math.round((Date.now() - t0) / 1000)} s）`);
+      if (samePaper(id)) ui.status(`正在生成中英对照版…（${Math.round((Date.now() - t0) / 1000)} s）`);
       await sleep(POLL_MS);
-      const files = await arxivFiles(id);
-      if (files && files.biUrl) return;
-      const warns = await taskWarnings(st.task_id);
+      const snapshot = await taskSnapshot(taskId);
+      rememberTask(id, snapshot);
+      if (snapshot.artifacts?.bi_pdf) return;
+      const warns = (snapshot.warnings || []).filter((w) => w.startsWith('[bilingual]'));
       if (warns.length > before) throw new TexlateError(warns[warns.length - 1].replace('[bilingual] ', ''));
+      if (Date.now() - t0 >= 30 * 60 * 1000) throw new TexlateError(`生成对照版超时（任务 ${taskId}）；请打开 TeXlate 查看详情`);
     }
   }
 
@@ -238,6 +386,7 @@
       await ensureTranslated(id);
       if (mode === 'bi' && !(await arxivFiles(id)).biUrl) await ensureBilingual(id);
     }
+    if (!samePaper(id)) throw new TexlateError('论文已切换，已停止更换上一页的 PDF；翻译任务仍可在 TeXlate 查看');
     pendingModes.set(baseOf(id), mode);
     try {
       await reloadViewer();
@@ -248,31 +397,17 @@
     }
   }
 
-  // 未翻译则提交并轮询到出中文 PDF
+  // 新任务与已有任务都按固定 task_id 等待，菜单始终可以打开并取消。
   async function ensureTranslated(id) {
-    const files = await arxivFiles(id);
-    if (files && files.zhUrl) return;
-    let st = files ? await arxivStatus(id) : null;
-    if (!st || st.status !== 'start') {
-      ui.status('已提交到 TeXlate，后台翻译中…');
-      await startTranslate(id);
+    let snapshot = await refreshTask(id);
+    if (snapshot?.artifacts?.zh_pdf) return;
+    let taskId = snapshot?.task_id;
+    if (!snapshot || !ACTIVE_TASKS.has(snapshot.status)) {
+      taskId = await startTranslate(id);
+      ui.status('已提交到 TeXlate，后台翻译中；可在菜单查看进度或取消');
     }
-    for (;;) {
-      st = await arxivStatus(id);
-      if (st.status === 'start') {
-        ui.status(`翻译中 ${st.progress}%${st.info ? ' · ' + st.info : ''}`);
-        await sleep(POLL_MS);
-        continue;
-      }
-      if (st.status === 'finished') {
-        const done = await arxivFiles(id);
-        if (!done || !done.zhUrl) {
-          throw new TexlateError(`翻译结束但没有中文 PDF：${(done && done.msg) || st.info}（任务 ${st.task_id}）`);
-        }
-        return;
-      }
-      throw new TexlateError(`翻译失败（${st.status}）：${st.info}。在 ${TEXLATE}/#/reader/${st.task_id} 查看详情`);
-    }
+    snapshot = await watchTask(id, taskId);
+    if (!snapshot.artifacts?.zh_pdf) throw new TexlateError(`任务未生成中文 PDF：${taskDescription(snapshot)}`);
   }
 
   // ------------------------------------------------------------ 阅读器热重载
@@ -639,24 +774,52 @@
               color:#9a2036;cursor:pointer;font:600 12px/1 -apple-system,system-ui,sans-serif}
         .main:hover{background:rgba(0,0,0,.06)}
         .main:disabled{opacity:.5;cursor:default}
-        .menu{position:fixed;z-index:2147483647;display:flex;flex-direction:column;padding:4px;border-radius:10px;
+        .menu{position:fixed;z-index:2147483647;display:flex;flex-direction:column;padding:6px;border-radius:10px;
+              width:260px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;
               background:#fff;border:1px solid #ddd;box-shadow:0 6px 18px rgba(0,0,0,.15);
-              font:13px/1.2 -apple-system,system-ui,sans-serif}
-        .menu[hidden],.tip[hidden]{display:none}
-        .menu button{border:0;background:transparent;text-align:left;padding:7px 12px;border-radius:6px;
-                     cursor:pointer;color:#222;font:inherit;white-space:nowrap}
-        .menu button:hover{background:#f3e8ea}
+              font:13px/1.4 -apple-system,system-ui,sans-serif;color:#222}
+        [hidden]{display:none!important}
+        .menu button,.menu a{border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:6px;
+                     cursor:pointer;color:inherit;font:inherit;text-decoration:none}
+        .menu button:hover:enabled,.menu a:hover{background:#f3e8ea}
+        .menu button:disabled,.menu a[aria-disabled=true]{opacity:.45;cursor:default;pointer-events:none}
         .menu button.on{color:#9a2036;font-weight:600}
+        .menu hr{border:0;border-top:1px solid #eee;margin:5px 0}
+        .task-status,.task-note,.task-error{padding:5px 10px;overflow-wrap:anywhere}
+        .task-status{font-weight:600}
+        .task-note{font-size:12px;color:#666}
+        .task-error{color:#b00020;font-size:12px}
+        .menu .danger{color:#a22437}
+        @media(prefers-color-scheme:dark){
+          .menu{background:#242424;color:#eee;border-color:#555}
+          .menu hr{border-color:#444}.task-note{color:#bbb}
+          .menu button:hover:enabled,.menu a:hover{background:#493038}
+          .menu button.on,.menu .danger{color:#ff9aac}.task-error{color:#ffb4bf}
+        }
         .tip{position:fixed;z-index:2147483647;max-width:300px;padding:6px 9px;border-radius:8px;
              background:#222;color:#fff;font:12px/1.4 -apple-system,system-ui,sans-serif;
              box-shadow:0 4px 14px rgba(0,0,0,.18);word-break:break-word}
         .tip.err{background:#b00020}
       </style>
-      <button type="button" class="main"></button>
-      <div class="menu" hidden>
+      <button type="button" class="main" aria-expanded="false" aria-controls="texlate-menu"></button>
+      <div class="menu" id="texlate-menu" aria-label="TeXlate 阅读与翻译" hidden>
         <button type="button" data-m="en">英文原版</button>
         <button type="button" data-m="zh">中文版</button>
         <button type="button" data-m="bi">中英对照版</button>
+        <hr>
+        <div class="task-status" role="status" aria-live="polite">正在查询翻译状态…</div>
+        <div class="task-note" hidden></div>
+        <div class="task-error" role="alert" hidden></div>
+        <button type="button" data-a="refresh">刷新任务状态</button>
+        <button type="button" data-a="retranslate">重新翻译全文</button>
+        <div class="task-note">重译将创建新任务，重新调用模型，保留旧 PDF。</div>
+        <button type="button" data-a="cancel" class="danger" hidden>取消当前翻译</button>
+        <button type="button" data-a="retry" hidden>继续 / 重试失败任务</button>
+        <hr>
+        <button type="button" data-a="download-zh">下载中文 PDF</button>
+        <button type="button" data-a="download-bi">下载中英对照 PDF</button>
+        <a data-a="details" target="_blank" rel="noopener noreferrer" aria-disabled="true">打开任务详情</a>
+        <a href="${TEXLATE}/" target="_blank" rel="noopener noreferrer">打开 TeXlate</a>
       </div>
       <div class="tip" hidden></div>`;
     const tip = shadow.querySelector('.tip');
@@ -664,18 +827,46 @@
 
     const btn = shadow.querySelector('.main');
     const menu = shadow.querySelector('.menu');
+    let panelPaper = null;
+    let panelError = '';
+    let pollInFlight = false;
+    let lastPoll = 0;
+
+    async function pollTask() {
+      const id = paperId();
+      if (!id || pollInFlight) return;
+      pollInFlight = true;
+      lastPoll = Date.now();
+      try {
+        await refreshTask(id);
+        if (samePaper(id)) panelError = '';
+      } catch (err) {
+        if (samePaper(id)) panelError = err.message || String(err);
+        console.error('[alphaxiv-texlate]', err);
+      } finally {
+        pollInFlight = false;
+        lastPoll = Date.now();
+        refresh();
+      }
+    }
+
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      if (busy || !paperId()) return;
+      if (!paperId()) return;
       menu.hidden = !menu.hidden;
+      btn.setAttribute('aria-expanded', String(!menu.hidden));
+      if (!menu.hidden) {
+        tip.hidden = true;
+        pollTask();
+      }
       placeMenu();
     });
-    menu.querySelectorAll('button').forEach((b) =>
+    menu.querySelectorAll('button[data-m]').forEach((b) =>
       b.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        menu.hidden = true;
         const id = paperId();
         if (busy || !id) return;
+        menu.hidden = true;
         busy = true;
         refresh();
         switchTo(b.dataset.m).catch(error).finally(() => {
@@ -684,14 +875,31 @@
         });
       }),
     );
-    document.addEventListener('click', () => (menu.hidden = true));
+    menu.querySelectorAll('button[data-a]').forEach((b) =>
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = paperId();
+        if (!id || b.disabled) return;
+        panelError = '';
+        taskAction(b.dataset.a, id).catch((err) => {
+          if (samePaper(id)) error(err);
+          else console.error('[alphaxiv-texlate]', err);
+        });
+      }),
+    );
+    document.addEventListener('click', () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); });
+    shadow.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.focus(); }
+    });
 
     // 菜单定位在按钮正下方左对齐（fixed：工具栏可能 overflow 裁剪）
     function placeMenu() {
       if (menu.hidden) return;
       const r = host.getBoundingClientRect();
-      menu.style.top = `${r.bottom + 6}px`;
-      menu.style.left = `${r.left}px`;
+      const width = menu.getBoundingClientRect().width;
+      const height = menu.getBoundingClientRect().height;
+      menu.style.left = `${Math.max(16, Math.min(r.left, innerWidth - width - 16))}px`;
+      menu.style.top = `${Math.max(16, Math.min(r.bottom + 6, innerHeight - height - 16))}px`;
     }
 
     function visibleAnchor() {
@@ -706,8 +914,10 @@
         [...document.querySelectorAll(PDF_PAGE)].some((pg) => pg.getClientRects().length > 0);
       const anchor = readerVisible ? visibleAnchor() : null;
       if (!anchor) {
-        host.style.display = 'none';
+        // Remove the populated shadow host while alphaXiv hydrates the abstract shell.
+        if (host.isConnected) host.remove();
         menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
         return;
       }
       if (!host.isConnected) document.body.appendChild(host);
@@ -735,7 +945,7 @@
       clearTimeout(tipTimer);
       tip.textContent = text;
       tip.classList.toggle('err', !!isErr);
-      tip.hidden = false;
+      tip.hidden = !menu.hidden;
       place();
       if (!sticky) tipTimer = setTimeout(() => (tip.hidden = true), 3000);
     }
@@ -745,18 +955,58 @@
       place();
       const id = paperId();
       if (!id) return;
-      // 按钮显示当前模式，点开菜单选目标模式（未翻译/无对照版时后台生成）
+      if (panelPaper !== id) {
+        panelPaper = id;
+        panelError = '';
+        tip.hidden = true;
+        menu.hidden = true;
+        lastPoll = 0;
+      }
+      const snapshot = taskSnapshots.get(id);
+      const active = !!snapshot && ACTIVE_TASKS.has(snapshot.status);
       const mode = modeOf(id);
-      btn.textContent = MODES[mode].label;
-      btn.title = `当前：${MODES[mode].name}（TeXlate 切换）`;
+      btn.textContent = MODES[mode].label + (active ? '·' : '');
+      btn.title = `当前：${MODES[mode].name} · TeXlate${snapshot ? ' · ' + taskDescription(snapshot) : ''}`;
       btn.setAttribute('aria-label', btn.title);
-      btn.disabled = busy;
-      menu.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === mode));
+      // 保持菜单可打开：耗时翻译期间仍可取消任务或打开详情。
+      btn.setAttribute('aria-busy', String(busy));
+      btn.setAttribute('aria-expanded', String(!menu.hidden));
+      menu.querySelectorAll('button[data-m]').forEach((b) => {
+        b.classList.toggle('on', b.dataset.m === mode);
+        b.disabled = busy;
+      });
+      shadow.querySelector('.task-status').textContent = taskSnapshots.has(id) ? taskDescription(snapshot) : '正在查询翻译状态…';
+      const note = shadow.querySelector('.task-note');
+      const warnings = snapshot?.warnings || [];
+      note.hidden = !warnings.length;
+      note.textContent = warnings.length ? `有 ${warnings.length} 条提示，请打开任务详情查看` : '';
+      const taskError = shadow.querySelector('.task-error');
+      const errorText = panelError || snapshot?.error?.message || '';
+      taskError.hidden = !errorText;
+      taskError.textContent = errorText;
+      menu.querySelectorAll('button[data-a]').forEach((b) => {
+        const action = b.dataset.a;
+        b.disabled = actionPending || pollInFlight;
+        if (action !== 'refresh' && !snapshot) b.disabled = true;
+        if (action === 'retranslate' && (active || busy)) b.disabled = true;
+        if (action === 'cancel') b.hidden = !active;
+        if (action === 'retry') b.hidden = !snapshot || !RETRY_TASKS.has(snapshot.status);
+        if (action === 'download-zh' && !snapshot?.artifacts?.zh_pdf) b.disabled = true;
+        if (action === 'download-bi' && !snapshot?.artifacts?.bi_pdf) b.disabled = true;
+      });
+      const details = menu.querySelector('[data-a=details]');
+      details.setAttribute('aria-disabled', String(!snapshot));
+      if (snapshot) details.href = `${TEXLATE}/#/reader/${encodeURIComponent(snapshot.task_id)}`;
+      else details.removeAttribute('href');
+      placeMenu();
+      if (!menu.hidden && !panelError && Date.now() - lastPoll >= POLL_MS) pollTask();
     }
 
     function error(err) {
       console.error('[alphaxiv-texlate]', err);
-      setStatus(err.message || String(err), true, true);
+      panelError = err.message || String(err);
+      setStatus(panelError, true, true);
+      refresh();
     }
 
     setInterval(refresh, 500);

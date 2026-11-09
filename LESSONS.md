@@ -12,14 +12,14 @@
   原因：作者样式的 `display:flex` 会覆盖 `hidden` 属性的默认效果，隐藏的菜单仍会拦截点击。证据：Playwright 报告 “menu subtree intercepts pointer events”。
 - **热重载要触发阅读器 effect 的依赖（`pdfError`），不能靠切换 Abstract/Paper 标签。**
   原因：切换标签后，阅读器复用了原来的 pdf.js 实例和页节点，不会重新 `setDocument`。证据：切换前后 `.page` 节点保持同一批（旧节点标记全在）。
-- **端到端测试以「按钮恢复可点」作为切换完成的判据。**
-  原因：「出现新页文字层」在后台翻译或生成期间就会被旧页满足，导致测量过早。
+- **端到端测试以「主按钮 aria-busy 恢复 false」作为切换完成的判据。**
+  原因：「出现新页文字层」在后台翻译或生成期间就会被旧页满足，导致测量过早。2026-11-09 起菜单在忙碌时也可打开，以便取消任务，因此不再用 disabled 判断完成。
 - **Magpie gateway key 不要用费用上限来拦付费模型，要用模型白名单。**
   原因：Magpie 按模型目录标价估算费用，免费模型也会被计费，0.01 美元的上限会把正常翻译拦成 429。证据：texlate key 报 “has used $0.05 of its $0.01”。
 - **OpenCode Zen 免费额度会用尽（429 “Free usage limit reached”），翻译耗时以降级模型为准评估。**
   证据：WorldCast（238 块）翻译期间，61 个请求降级到 step-5-preview，用时 914 s；1502.02761 在 Zen 正常服务时只用 138 s。
-- **调用 OpenRouter 免费模型时显式关闭推理（Magpie 成员写 `:none`）。**
-  原因：默认推理下，单批输出 6k–15k 推理 token，导致超时、空内容和占位符损坏；关闭后，dots 从 94–108 s 降到 11 s，nemotron-ultra 从 66–143 s 降到 16 s，质量仍在第一档。证据：`docs/research/2026-10-28-model-selection.md`。
+- **历史实验：关闭 OpenRouter 免费模型推理可缩短耗时；此项不再作为当前配置规则。**
+  2026-10-28 默认推理下，单批输出 6k–15k 推理 token，曾导致超时、空内容和占位符损坏；关闭后 dots 从 94–108 s 降到 11 s，nemotron-ultra 从 66–143 s 降到 16 s。证据：`docs/research/2026-10-28-model-selection.md`。2026-11-09 用户明确要求保留推理、强度至少 low；当前按模型支持档位设置，不能重新应用旧的 `:none` 规则。
 
 ## 2026-10-29
 

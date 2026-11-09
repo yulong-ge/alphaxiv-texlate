@@ -67,11 +67,11 @@ def has_cjk(s: str) -> bool:
 
 
 def wait_switch_done(page, timeout_ms: int = 600_000) -> None:
-    """等工具栏按钮恢复可点（busy 结束 = 翻译/生成/热切换整条链路完成）。"""
+    """等模式切换完成；菜单按钮在忙碌时仍可打开，以便取消或查看任务。"""
     page.wait_for_timeout(500)
     page.wait_for_function(
         f"() => {{ const h = document.querySelector('{HOST}'); "
-        "return h && !h.shadowRoot.querySelector('.main').disabled; }",
+        "return h && h.shadowRoot.querySelector('.main').getAttribute('aria-busy') === 'false'; }",
         timeout=timeout_ms,
     )
 

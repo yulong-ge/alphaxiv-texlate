@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.5
+// @version      0.5.6
 // @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，划线翻译默认选择中文
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
@@ -701,15 +701,16 @@
     function ensureMounted() {
       // 页面 hydrate 完成前不挂任何节点（避免 React #418）；阅读器页节点只在客户端渲染，
       // 出现即说明 hydrate 已完成。alphaXiv 新版使用 #viewer，旧版使用 .paperBody。
-      if (!host.isConnected) {
-        if (!document.querySelector(PDF_PAGE)) return;
-        document.body.appendChild(host);
-      }
-      const anchor = visibleAnchor();
+      // SPA 切回摘要时仍保留有尺寸的 PDF 页；路由与页节点必须同时属于阅读器。
+      const readerVisible = /^\/pdf\//.test(location.pathname) &&
+        [...document.querySelectorAll(PDF_PAGE)].some((pg) => pg.getClientRects().length > 0);
+      const anchor = readerVisible ? visibleAnchor() : null;
       if (!anchor) {
         host.style.display = 'none';
+        menu.hidden = true;
         return;
       }
+      if (!host.isConnected) document.body.appendChild(host);
       const r = anchor.getBoundingClientRect();
       host.style.display = 'inline-flex';
       host.style.left = `${r.right + 4}px`;

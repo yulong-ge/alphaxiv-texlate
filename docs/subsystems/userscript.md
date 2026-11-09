@@ -53,10 +53,11 @@
 ## 约束
 
 - 内联 module 只在首次热切换时注入，因为 `document-start` 时 `<head>` 可能还不存在。注入必须在页面 realm 中执行 `import()`，才能拿到同一个 store 实例。
-- 挂载与定位约束见 [LESSONS.md](../../LESSONS.md)：等 hydrate 完成后再挂载；用 `fixed` 定位，不插入工具栏；处理 `[hidden]` 样式。
+- 挂载与定位约束见 [LESSONS.md](../../LESSONS.md)：等 hydrate 完成后再挂载；用 `fixed` 定位，不插入工具栏；处理 `[hidden]` 样式。每次更新位置都检查当前路由为 `/pdf/` 且存在可见 PDF 页（切回摘要时，站点可能仍保留有尺寸的阅读器节点）；切到摘要页或阅读器隐藏时，隐藏切换钮并关闭菜单，避免误用摘要页的分享按钮作为锚点。
 
 ## 验证
 
+- 按钮可见性：`uv run --with playwright python -I tests/e2e/run_visibility.py 2510.07550`。覆盖直接打开摘要页，以及不刷新页面的「摘要 → PDF → 摘要 → PDF」导航；摘要页不得出现切换钮或菜单，返回 PDF 后按钮恢复且菜单保持关闭。
 - 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。每次切换前预置一条假的预览缓存和假高亮，切换后断言两者都已清除。可用 `--modes zh en zh zh en` 验证连续切换和同模式重载；测试末尾注入一次重载失败，断言 GM 模式未被污染，并验证下一次点击恢复。
 - 引用跳转：`uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py <id> [n]`。引文取自英文 PDF 的抽取文字（保留断词连字符），注入真实格式的 `data-citation` 按钮后点击；判据是高亮区汉字与期望段译文的重合率 ≥ 0.6。没有走真实 AI 对话。
 

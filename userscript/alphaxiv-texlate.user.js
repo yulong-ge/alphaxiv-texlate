@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.2
-// @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，PDF 原地热切换为中文版或中英对照版
+// @version      0.5.3
+// @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，并自动将划线翻译为中文
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
 // @run-at       document-start
@@ -582,6 +582,82 @@
     true,
   );
 
+  // ------------------------------------------------------------ 划线自动翻译
+
+  // alphaXiv 的划线卡片默认先打开语言菜单，再选择目标语言。监听卡片出现，
+  // 自动完成这两步；选择中文后，站点会立即请求翻译并把结果放回同一张卡片。
+  function installAutoChineseSelection() {
+    const GROUP = '[role="group"][aria-label="选中内容草稿"]';
+    const processed = new WeakSet();
+    let running = false;
+
+    function waitForChineseMenu(timeout = 1500) {
+      const start = Date.now();
+      return new Promise((resolve, reject) => {
+        const check = () => {
+          const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+            (node) => node.textContent.trim() === '中文' && node.getClientRects().length,
+          );
+          if (item) return resolve(item);
+          if (Date.now() - start >= timeout) {
+            return reject(new TexlateError('打开划线翻译语言菜单失败：没有找到“中文”选项'));
+          }
+          setTimeout(check, 40);
+        };
+        check();
+      });
+    }
+
+    function openLanguageMenu(button) {
+      if (typeof W.PointerEvent !== 'function') {
+        throw new TexlateError('打开划线翻译语言菜单失败：当前浏览器不支持 PointerEvent');
+      }
+      const r = button.getBoundingClientRect();
+      const eventInit = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: W,
+        pointerId: 1,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+      };
+      for (const type of ['pointerdown', 'pointerup', 'click']) {
+        button.dispatchEvent(new W.PointerEvent(type, eventInit));
+      }
+    }
+
+    async function translateGroup(group) {
+      if (running || processed.has(group)) return;
+      const button = group.querySelector('button[aria-label="翻译选中文字"]');
+      if (!button) return;
+      processed.add(group);
+      running = true;
+      try {
+        openLanguageMenu(button);
+        const chinese = await waitForChineseMenu();
+        chinese.click();
+      } catch (err) {
+        processed.delete(group);
+        ui.error(err instanceof Error ? err : new TexlateError(String(err)));
+      } finally {
+        running = false;
+      }
+    }
+
+    const scan = () => document.querySelectorAll(GROUP).forEach(translateGroup);
+    const start = () => {
+      if (!document.body) throw new TexlateError('无法安装划线自动翻译：页面 body 尚未创建');
+      const observer = new MutationObserver(scan);
+      observer.observe(document.body, { childList: true, subtree: true });
+      scan();
+    };
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+  }
+
   // ------------------------------------------------------------ 工具栏切换钮
 
   // 浮在阅读器工具栏「分享」按钮右侧的空白处：挂 <body> + position:fixed，按锚点位置定位，
@@ -728,4 +804,6 @@
       refresh,
     };
   })();
+
+  installAutoChineseSelection();
 })();

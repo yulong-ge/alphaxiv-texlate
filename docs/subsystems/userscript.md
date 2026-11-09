@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-在 `alphaxiv.org` 页面内完成四件事：替换阅读器拿到的 PDF 字节；不刷新页面地触发阅读器重新加载；提供工具栏切换钮；中文模式下接管 AI 侧边栏的引用跳转。翻译和编译都交给 TeXlate，脚本自身不处理 PDF 内容。
+在 `alphaxiv.org` 页面内完成五件事：替换阅读器拿到的 PDF 字节；不刷新页面地触发阅读器重新加载；提供工具栏切换钮；划线后自动选择中文并触发 alphaXiv 的选区翻译；中文模式下接管 AI 侧边栏的引用跳转。整篇论文翻译和编译交给 TeXlate，划线翻译仍交给 alphaXiv，脚本自身不处理 PDF 内容。
 
 ## 真源
 
@@ -26,7 +26,8 @@
    - 等待 `pdfLoads` 增加，且出现未标记的页文字层。
    - 等页面布局稳定后，恢复滚动比例。
    - 清除 alphaXiv 的引用预览缓存（react-query 键 `overview-citation-preview`）和已画出的原生引用高亮。预览缓存不区分 PDF，且永不过期，点击跳转直接复用其中的页码与坐标；不清除的话，切换后会按上一个 PDF 定位。
-4. 引用跳转（仅 zh 模式）：
+4. 划线翻译：监听 `[role="group"][aria-label="选中内容草稿"]`。出现 `button[aria-label="翻译选中文字"]` 时，用页面级 `pointerdown → pointerup → click` 序列打开语言菜单，再点击 `menuitem`「中文」。alphaXiv 会在语言切换后立即请求翻译并把结果写回选区卡片；翻译完成后该按钮消失，因此不会重复触发。
+5. 引用跳转（仅 zh 模式）：
    - alphaXiv 引用按钮带 `data-citation=[paper, page, startText, endText]`，原生逻辑在已载入 PDF 的文字里匹配英文引文。英文版和对照版含原文，能命中；中文版不含，只能跳到英文页码。
    - 脚本在 `document` 捕获阶段拦截点击（先于 React 根节点监听）。引用别的论文、或不在 zh 模式时不拦截。
    - 英文引文 → 段落 seq：读取 TeXlate `/api/task/{tid}/chunks`（各段英文源码）与 `/reader`（`seqpos`，各段在原文与译文 PDF 中的页和位置）。引文与段落源码都化为「NFKC + 小写 + 只留字母数字」的骨架，按 12 字符片段命中比例选段，同分时优先英文页码接近的段。

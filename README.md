@@ -6,7 +6,7 @@
 
 | 部分 | 作用 |
 | --- | --- |
-| `userscript/alphaxiv-texlate.user.js` | Tampermonkey 脚本：工具栏切换钮（EN / 中 / 双）、PDF 字节替换、阅读器热重载 |
+| `userscript/alphaxiv-texlate.user.js` | Tampermonkey 脚本：工具栏切换钮（EN / 中 / 双）、划线自动中文翻译、PDF 字节替换、阅读器热重载 |
 | TeXlate（本地服务） | arXiv LaTeX 源码 → 段落翻译 → 重新编译中文 PDF。中英对照版需要 `POST /api/task/{id}/bilingual`，目前在 fork 分支 [yulong-ge/texlate@local/alphaxiv](https://github.com/yulong-ge/texlate/tree/local/alphaxiv)，正与上游讨论合并 |
 | `tools/` | 模型评测、批量翻译、对照版批量生成等脚本 |
 | `tests/e2e/` | Playwright 端到端测试（真实 alphaXiv 页面） |
@@ -20,6 +20,7 @@
    - **中英对照版**：每个正文段先显示灰色原文，再显示译文。缺少时由 TeXlate 按需编译，通常只需几秒到几十秒。
    - **英文原版**：切回原文。
 4. 每篇论文记住上次选择的模式，再次打开时直接显示该模式。
+5. 在 PDF 中划线后，脚本会自动打开划线翻译并选择「中文」；翻译结果会直接显示在右下角卡片中。
 
 ## 工作原理
 

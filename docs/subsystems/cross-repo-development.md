@@ -17,7 +17,7 @@ alphaXiv-texlate 和本地 TeXlate fork 保持两个 Git 仓库、两个发布�
 
 | alphaXiv-texlate | TeXlate fork | 关键能力 |
 | --- | --- | --- |
-| `0.6.x` | `b1adf04` 及以后 | 语言切换、任务菜单、下载、取消/重试、`POST /api/task/{tid}/retranslate` |
+| `0.6.x` | `b1adf04` 及以后；目录书签修复从 `384983b` 起 | 语言切换、任务菜单、下载、取消/重试、`POST /api/task/{tid}/retranslate`；`384983b` 起 moving argument 书签不再泄漏 MCID |
 | `0.5.x` | `587fc84`–`b774a20` | 语言切换、中英对照版、引用跳转；不支持全文 clean retranslate |
 
 提交新的服务端接口或 PDF 产物规则时，同时更新矩阵。矩阵中的 TeXlate 提交必须是可复现的 fork revision；不要只写“最新版”。

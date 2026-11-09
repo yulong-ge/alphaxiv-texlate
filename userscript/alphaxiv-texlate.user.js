@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.4
+// @version      0.5.5
 // @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，划线翻译默认选择中文
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
@@ -65,7 +65,8 @@
   }
 
   const baseOf = (id) => id.replace(/v\d+$/, '');
-  const modeOf = (id) => GM_getValue('mode:' + baseOf(id), 'en');
+  const pendingModes = new Map();
+  const modeOf = (id) => pendingModes.get(baseOf(id)) || GM_getValue('mode:' + baseOf(id), 'en');
   const setMode = (id, mode) => GM_setValue('mode:' + baseOf(id), mode);
 
   // 阅读器实际加载的带版本 ID；未见 PDF 请求前回退到地址栏 ID
@@ -180,7 +181,6 @@
         ui.status(`正在载入${MODES[mode].name}…`);
         return fetchModePdf(id, mode).then(
           (buf) => {
-            ui.done(`当前显示：${MODES[mode].name}（TeXlate）`);
             return new W.Response(buf, { status: 200, headers: { 'content-type': 'application/pdf' } });
           },
           (err) => {
@@ -232,16 +232,20 @@
   async function switchTo(mode) {
     const id = paperId();
     if (!id) throw new TexlateError('当前页面不是 arXiv 论文，无法翻译');
-    if (mode === 'en') {
-      setMode(id, 'en');
-      await reloadViewer();
-      ui.done(`当前显示：${MODES.en.name}`);
-      return;
+    // 先验证页面桥接和目标产物，再改变供给 PDF 的模式。
+    await (await pageHelper()).viewer();
+    if (mode !== 'en') {
+      await ensureTranslated(id);
+      if (mode === 'bi' && !(await arxivFiles(id)).biUrl) await ensureBilingual(id);
     }
-    await ensureTranslated(id);
-    if (mode === 'bi' && !(await arxivFiles(id)).biUrl) await ensureBilingual(id);
-    setMode(id, mode);
-    await reloadViewer();
+    pendingModes.set(baseOf(id), mode);
+    try {
+      await reloadViewer();
+      setMode(id, mode);
+      ui.done(`当前显示：${MODES[mode].name}${mode === 'en' ? '' : '（TeXlate）'}`);
+    } finally {
+      pendingModes.delete(baseOf(id));
+    }
   }
 
   // 未翻译则提交并轮询到出中文 PDF
@@ -275,7 +279,7 @@
 
   async function waitFor(cond, what, timeoutMs = 60000) {
     const t0 = Date.now();
-    while (!cond()) {
+    while (!(await cond())) {
       if (Date.now() - t0 > timeoutMs) throw new TexlateError(`切换超时：${what}`);
       await sleep(100);
     }
@@ -301,25 +305,27 @@
     const isAtoms = (v) =>
       v && typeof v === 'object' && 'pdfError' in v && 'pdfViewer' in v && 'loadedCanonicalId' in v;
     const viewerState = async () => {
-      const api = await import(pick('api-typed-'));
-      // 新版把 PDF atom 组移到 pdf.atoms，把共享 Jotai store 移到 bind-mutations；
-      // 旧版仍从 pdfjs-enums 和 api-typed 导出，两个结构都支持。
+      // 2026-11 新壳不再加载 api-typed；共享 store 在 bind-mutations，PDF
+      // atoms 在 pdf.atoms。api-typed 只作为旧壳的可选 query-client 来源。
+      const apiUrl = pick('api-typed-', false);
+      const api = apiUrl ? await import(apiUrl) : null;
       const atomUrl = pick('pdf.atoms-', false) || pick('pdfjs-enums-', false);
       const atomMod = atomUrl ? await import(atomUrl) : null;
       const storeUrl = pick('bind-mutations-', false);
       const storeMod = storeUrl ? await import(storeUrl) : null;
-      const store = [storeMod, api]
-        .filter(Boolean)
-        .flatMap((m) => Object.values(m))
-        .find(isStore);
+      const modules = [storeMod, api].filter(Boolean);
+      const store = modules.flatMap((m) => Object.values(m)).find(isStore);
       const atoms = atomMod && Object.values(atomMod).find(isAtoms);
       if (!store || !atoms) throw new Error('找不到阅读器状态 store/atom（站点改版？）');
-      // react-query 客户端单例取自 api-typed 导出的 getQueryClient（形如 ()=>c??=make()）。
-      // 路由 context 上的 queryClient 是代理（任意属性都返回 Promise），不能用
-      const queryClient = Object.values(api)
+      // 只调用形如 ()=>client??=make() 的单例 getter。不能试调用所有零参
+      // 导出：其中包含 React hooks 和修改登录状态的动作。
+      const userUrl = pick('user-', false);
+      const userMod = userUrl ? await import(userUrl) : null;
+      const queryClient = [userMod, api].filter(Boolean)
+        .flatMap((m) => Object.values(m))
         .filter((v) => typeof v === 'function' && v.length === 0 && /^\\(\\)=>[\\w$]+\\?\\?=[\\w$]+\\(\\)$/.test(String(v)))
         .map((f) => f())
-        .find((c) => c && typeof c.removeQueries === 'function' && typeof c.getQueryCache().findAll === 'function');
+        .find((c) => c && typeof c.removeQueries === 'function' && typeof c.getQueryCache?.().findAll === 'function');
       if (!queryClient) throw new Error('找不到 react-query 客户端（站点改版？）');
       return { store, atoms, queryClient };
     };
@@ -370,14 +376,20 @@
   async function reloadViewer() {
     const scroller = document.querySelector(PDF_SCROLL);
     if (!scroller) throw new TexlateError('找不到阅读器区域，无法热切换');
+    const helper = await pageHelper();
+    const previousDocument = (await helper.viewer())?.pdfDocument;
+    const targetId = paperId();
     const ratio = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
     const before = pdfLoads;
     // 标记旧页节点：新 PDFViewer 复用容器但重建页节点，未带标记的页出现文字层即新文档已渲染
     // （首页未必在视口内，故不限定页码）
     document.querySelectorAll(PDF_PAGE).forEach((pg) => (pg.dataset.texlateStale = '1'));
     clearCiteMarks();
-    await (await pageHelper()).reload();
-    await waitFor(() => pdfLoads > before, '阅读器重新载入 PDF');
+    await helper.reload();
+    await waitFor(async () => {
+      const viewer = await helper.viewer();
+      return pdfLoads > before && currentId === targetId && viewer?.pdfDocument && viewer.pdfDocument !== previousDocument;
+    }, '阅读器载入新的 PDF 文档');
     await waitFor(
       () => document.querySelector(PDF_TEXT_FRESH),
       '新 PDF 渲染',
@@ -663,7 +675,7 @@
         ev.stopPropagation();
         menu.hidden = true;
         const id = paperId();
-        if (busy || !id || b.dataset.m === modeOf(id)) return;
+        if (busy || !id) return;
         busy = true;
         refresh();
         switchTo(b.dataset.m).catch(error).finally(() => {

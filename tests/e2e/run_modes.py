@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -27,7 +28,8 @@ CITE_STATE = """async (seed) => {
     return url ? import(url) : null;
   };
   const apiMod = await mod('api-typed-');
-  const api = Object.values(apiMod);
+  const userMod = await mod('user-');
+  const api = [userMod, apiMod].filter(Boolean).flatMap((m) => Object.values(m));
   const qc = api.filter((v) => typeof v === 'function' && v.length === 0 && /^\\(\\)=>[\\w$]+\\?\\?=[\\w$]+\\(\\)$/.test(String(v)))
     .map((f) => f()).find((c) => c && typeof c.removeQueries === 'function');
   const storeMod = await mod('bind-mutations-');
@@ -57,8 +59,12 @@ CITE_STATE = """async (seed) => {
 
 
 def main() -> int:
-    paper = sys.argv[1]
-    out = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paper")
+    parser.add_argument("out", nargs="?", type=Path)
+    parser.add_argument("--modes", nargs="+", choices=tuple(EXPECT_CJK), default=["bi", "zh", "en"])
+    args = parser.parse_args()
+    paper, out = args.paper, args.out
     failures: list[str] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome")
@@ -71,7 +77,7 @@ def main() -> int:
         page.wait_for_selector(PDF_TEXT, timeout=90_000, state="attached")
         page.wait_for_timeout(2000)
         page.evaluate("window.__noReload = 1")
-        for mode in ("bi", "zh", "en"):
+        for mode in args.modes:
             seeded = page.evaluate(CITE_STATE, True)
             if not (seeded["cached"] and seeded["highlight"]):
                 failures.append(f"{mode}: 无法预置引用缓存/高亮（{seeded}）")
@@ -94,6 +100,27 @@ def main() -> int:
                 failures.append(f"{mode}: 文字层语言不符（cjk={has_cjk(txt)}）")
             if out:
                 page.screenshot(path=str(out / f"mode_{mode}.png"))
+        # 注入一次桥接失败，验证失败不写模式，且下一次点击可以正常恢复。
+        saved = page.evaluate("GM_getValue('mode:' + location.pathname.split('/').pop().replace(/v\\d+$/, ''), 'en')")
+        target = "en" if saved == "zh" else "zh"
+        page.evaluate("""() => {
+          window.__testReload = window.__texlateReloadPdf;
+          window.__texlateReloadPdf = async () => { throw new Error('injected reload failure'); };
+        }""")
+        page.locator(HOST + " .main").click()
+        page.locator(f"{HOST} .menu button[data-m={target}]").click()
+        wait_switch_done(page)
+        after = page.evaluate("GM_getValue('mode:' + location.pathname.split('/').pop().replace(/v\\d+$/, ''), 'en')")
+        tip = page.locator(HOST + " .tip").inner_text()
+        if after != saved or "injected reload failure" not in tip:
+            failures.append(f"切换失败污染模式: before={saved} after={after} tip={tip}")
+        page.evaluate("window.__texlateReloadPdf = window.__testReload")
+        page.locator(HOST + " .main").click()
+        page.locator(f"{HOST} .menu button[data-m={target}]").click()
+        wait_switch_done(page)
+        if has_cjk(visible_text(page)) != EXPECT_CJK[target]:
+            failures.append("失败后的重试未能恢复切换")
+        print(f"failure recovery: persisted={saved} -> {after}, retry={target}, tip={tip!r}")
         if errors:
             failures.append(f"pageerror: {errors}")
         browser.close()

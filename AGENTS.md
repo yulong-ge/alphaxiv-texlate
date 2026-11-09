@@ -10,6 +10,10 @@ alphaXiv 阅读器内热切换 TeXlate 中文 / 中英对照 PDF 的油猴脚本
 - 写代码和验收时，先读 [代码规范与验收](docs/code-standards.md)。
 - 已踩过的坑见 [LESSONS.md](LESSONS.md)。
 
+## 发布约定
+
+- 用户授权（2026-11-09）：脚本改动完成并验证后，提交并推送到 GitHub `origin/main`，让 Tampermonkey 的 `@updateURL` 可以获取新版；不要只保留本地修改。推送前检查远程分支，禁止强推。
+
 ## 固定事实
 
 | 项 | 值 |

@@ -19,11 +19,11 @@
 2. 选择模式（`switchTo`）：
    - 选 zh 或 bi 时，先确保已翻译（`ensureTranslated`：提交翻译并轮询 `arxivStatus`）。
    - 选 bi 时，再确保有对照版（`ensureBilingual`：`POST bilingual`，轮询 `arxivFiles.bi`；新增的 `[bilingual]` warning 即视为失败）。
-   - 写入模式，然后调用 `reloadViewer`。
+   - 先验证页面桥接，再设置内存中的待切换模式并调用 `reloadViewer`；新 PDF 文档和文字层加载完成、引用缓存清除后，才将模式写入 GM 存储。失败抛错并清除待切换模式；允许重复点击同一模式以恢复失败的切换。
 3. `reloadViewer`：
    - 记录滚动比例，并给旧页节点打 `data-texlate-stale` 标记。
    - 调用注入页面的 `__texlateReloadPdf`：经 jotai store 先把 `pdfError` 置为错误，等两帧再清空。
-   - 等待 `pdfLoads` 增加，且出现未标记的页文字层。
+   - 等待当前论文的 `pdfLoads` 增加、阅读器的 `pdfDocument` 对象发生变化，且出现未标记的页文字层。
    - 等页面布局稳定后，恢复滚动比例。
    - 清除 alphaXiv 的引用预览缓存（react-query 键 `overview-citation-preview`）和已画出的原生引用高亮。预览缓存不区分 PDF，且永不过期，点击跳转直接复用其中的页码与坐标；不清除的话，切换后会按上一个 PDF 定位。
 4. 划线翻译：不监听选区卡片来自动发起翻译，以保留 AI 提问和笔记功能。脚本只在选区卡片、翻译按钮和可见语言菜单同时存在时，点击 `menuitem`「中文」；因此用户仍需先点击翻译图标，alphaXiv 会在语言切换后立即请求翻译并把结果写回选区卡片。
@@ -47,7 +47,7 @@
 | 滚动容器与页节点 | 新壳使用 `[data-scroll-restoration-id="paper-pdf-viewer"]`、`#viewer .page`、`.textLayer`；旧壳使用 `.paperBody`、`.page`、`.textLayer` |
 | 引用按钮属性 `data-citation`（JSON 数组 `[paper, page, startText, endText]`） | `closest('[data-citation]')` |
 | 阅读器 `pdfViewer`（`getPageView`、`scrollPageIntoView`、`pdfDocument`） | `PAGE_HELPER` 的 `__texlateViewer`，取自同一 atom 组的 `pdfViewer` |
-| react-query 客户端单例 | `api-typed` 中形如 `()=>c??=make()` 的零参导出，返回值须有 `removeQueries` 和 `getQueryCache().findAll`。路由 context 上的 `queryClient` 是代理，不能用 |
+| react-query 客户端单例 | 当前在 `user-*`，旧壳在 `api-typed-*`；只调用形如 `()=>c??=make()` 的零参导出，返回值须有 `removeQueries` 和 `getQueryCache().findAll`。不试调用任意零参导出（可能是 React hook 或有副作用的动作）。路由 context 上的 `queryClient` 是代理，不能用 |
 | 原生引用高亮 atom | 新壳先清 `pdf.atoms` 的 `citationPreview/currentSelection/activeAnchor/activeFocus`，旧壳再扫描 `/assets/paper-citation.atoms-*` 中当前值形如 `{pageIndex, rects}` 的 atom |
 
 ## 约束
@@ -57,7 +57,7 @@
 
 ## 验证
 
-- 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。每次切换前预置一条假的预览缓存和假高亮，切换后断言两者都已清除。
+- 热切换：`uv run --with playwright python -I tests/e2e/run_modes.py <id>`。每次切换前预置一条假的预览缓存和假高亮，切换后断言两者都已清除。可用 `--modes zh en zh zh en` 验证连续切换和同模式重载；测试末尾注入一次重载失败，断言 GM 模式未被污染，并验证下一次点击恢复。
 - 引用跳转：`uv run --with playwright --with pypdf python -I tests/e2e/run_citation.py <id> [n]`。引文取自英文 PDF 的抽取文字（保留断词连字符），注入真实格式的 `data-citation` 按钮后点击；判据是高亮区汉字与期望段译文的重合率 ≥ 0.6。没有走真实 AI 对话。
 
 见 [代码规范与验收](../code-standards.md)。

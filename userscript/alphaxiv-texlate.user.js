@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         alphaXiv × TeXlate 中文 PDF
 // @namespace    local.texlate.alphaxiv
-// @version      0.5.3
-// @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，并自动将划线翻译为中文
+// @version      0.5.4
+// @description  在 alphaXiv 阅读器工具栏一键调用本地 TeXlate 翻译，划线翻译默认选择中文
 // @match        https://www.alphaxiv.org/*
 // @match        https://alphaxiv.org/*
 // @run-at       document-start
@@ -582,77 +582,29 @@
     true,
   );
 
-  // ------------------------------------------------------------ 划线自动翻译
+  // ------------------------------------------------------------ 划线翻译默认中文
 
-  // alphaXiv 的划线卡片默认先打开语言菜单，再选择目标语言。监听卡片出现，
-  // 自动完成这两步；选择中文后，站点会立即请求翻译并把结果放回同一张卡片。
-  function installAutoChineseSelection() {
+  // 保留“向 AI 提问”和“笔记”的原始卡片。只在用户打开翻译语言菜单后，
+  // 看到“中文”选项时自动选择中文；单纯划线不会触发翻译。
+  function installChineseTranslationDefault() {
     const GROUP = '[role="group"][aria-label="选中内容草稿"]';
-    const processed = new WeakSet();
-    let running = false;
+    const TRANSLATE_BUTTON = 'button[aria-label="翻译选中文字"]';
 
-    function waitForChineseMenu(timeout = 1500) {
-      const start = Date.now();
-      return new Promise((resolve, reject) => {
-        const check = () => {
-          const item = [...document.querySelectorAll('[role="menuitem"]')].find(
-            (node) => node.textContent.trim() === '中文' && node.getClientRects().length,
-          );
-          if (item) return resolve(item);
-          if (Date.now() - start >= timeout) {
-            return reject(new TexlateError('打开划线翻译语言菜单失败：没有找到“中文”选项'));
-          }
-          setTimeout(check, 40);
-        };
-        check();
-      });
+    function consumeMenu() {
+      const group = document.querySelector(GROUP);
+      if (!group || !group.querySelector(TRANSLATE_BUTTON)) return;
+      const item = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].find(
+        (node) => node.textContent.trim() === '中文' && node.getClientRects().length,
+      );
+      if (item) item.click();
     }
 
-    function openLanguageMenu(button) {
-      if (typeof W.PointerEvent !== 'function') {
-        throw new TexlateError('打开划线翻译语言菜单失败：当前浏览器不支持 PointerEvent');
-      }
-      const r = button.getBoundingClientRect();
-      const eventInit = {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        view: W,
-        pointerId: 1,
-        pointerType: 'mouse',
-        button: 0,
-        clientX: r.left + r.width / 2,
-        clientY: r.top + r.height / 2,
-      };
-      for (const type of ['pointerdown', 'pointerup', 'click']) {
-        button.dispatchEvent(new W.PointerEvent(type, eventInit));
-      }
-    }
-
-    async function translateGroup(group) {
-      if (running || processed.has(group)) return;
-      const button = group.querySelector('button[aria-label="翻译选中文字"]');
-      if (!button) return;
-      processed.add(group);
-      running = true;
-      try {
-        openLanguageMenu(button);
-        const chinese = await waitForChineseMenu();
-        chinese.click();
-      } catch (err) {
-        processed.delete(group);
-        ui.error(err instanceof Error ? err : new TexlateError(String(err)));
-      } finally {
-        running = false;
-      }
-    }
-
-    const scan = () => document.querySelectorAll(GROUP).forEach(translateGroup);
     const start = () => {
-      if (!document.body) throw new TexlateError('无法安装划线自动翻译：页面 body 尚未创建');
-      const observer = new MutationObserver(scan);
+      if (!document.body) throw new TexlateError('无法安装划线翻译默认中文：页面 body 尚未创建');
+      const observer = new MutationObserver(consumeMenu);
       observer.observe(document.body, { childList: true, subtree: true });
-      scan();
+      setInterval(consumeMenu, 40);
+      consumeMenu();
     };
     if (document.body) start();
     else document.addEventListener('DOMContentLoaded', start, { once: true });
@@ -805,5 +757,5 @@
     };
   })();
 
-  installAutoChineseSelection();
+  installChineseTranslationDefault();
 })();

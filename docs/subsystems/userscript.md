@@ -26,7 +26,7 @@
    - 等待 `pdfLoads` 增加，且出现未标记的页文字层。
    - 等页面布局稳定后，恢复滚动比例。
    - 清除 alphaXiv 的引用预览缓存（react-query 键 `overview-citation-preview`）和已画出的原生引用高亮。预览缓存不区分 PDF，且永不过期，点击跳转直接复用其中的页码与坐标；不清除的话，切换后会按上一个 PDF 定位。
-4. 划线翻译：监听 `[role="group"][aria-label="选中内容草稿"]`。出现 `button[aria-label="翻译选中文字"]` 时，用页面级 `pointerdown → pointerup → click` 序列打开语言菜单，再点击 `menuitem`「中文」。alphaXiv 会在语言切换后立即请求翻译并把结果写回选区卡片；翻译完成后该按钮消失，因此不会重复触发。
+4. 划线翻译：不监听选区卡片来自动发起翻译，以保留 AI 提问和笔记功能。脚本只在选区卡片、翻译按钮和可见语言菜单同时存在时，点击 `menuitem`「中文」；因此用户仍需先点击翻译图标，alphaXiv 会在语言切换后立即请求翻译并把结果写回选区卡片。
 5. 引用跳转（仅 zh 模式）：
    - alphaXiv 引用按钮带 `data-citation=[paper, page, startText, endText]`，原生逻辑在已载入 PDF 的文字里匹配英文引文。英文版和对照版含原文，能命中；中文版不含，只能跳到英文页码。
    - 脚本在 `document` 捕获阶段拦截点击（先于 React 根节点监听）。引用别的论文、或不在 zh 模式时不拦截。
